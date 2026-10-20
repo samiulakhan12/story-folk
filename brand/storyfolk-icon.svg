@@ -1,14 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
-  <defs><linearGradient id="sf-g" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#9333EA"/></linearGradient>
-    <radialGradient id="sf-h" cx="120" cy="80" r="420" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>
-  <rect width="512" height="512" rx="116" fill="url(#sf-g)"/>
-  <rect width="512" height="512" rx="116" fill="url(#sf-h)"/>
+  <rect width="512" height="512" rx="116" fill="#6D5BF6"/>
   <g transform="translate(-8 8) rotate(45 256 256) translate(256 261) scale(.9) translate(-256 -261)">
     <path d="M214 262 C178 282 162 314 166 360 L214 334 Z" fill="#fff"/>
     <path d="M298 262 C334 282 350 314 346 360 L298 334 Z" fill="#fff"/>
     <path fill-rule="evenodd" d="M256 92 C318 136 316 240 302 336 L210 336 C196 240 194 136 256 92 Z M284 206 a28 28 0 1 0 -56 0 a28 28 0 1 0 56 0 Z" fill="#fff"/>
-    <path d="M234 352 L278 352 C278 384 268 404 256 430 C244 404 234 384 234 352 Z" fill="#FCD34D"/>
+    <path d="M234 352 L278 352 C278 384 268 404 256 430 C244 404 234 384 234 352 Z" fill="#FFC542"/>
   </g>
 </svg>

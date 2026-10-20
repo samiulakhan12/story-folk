@@ -13,10 +13,11 @@
 
 | Token | Hex |
 | --- | --- |
-| Indigo (gradient start) | `#6366F1` |
-| Purple (gradient end) | `#9333EA` |
-| Flame accent | `#FCD34D` |
+| Brand violet (icon background) | `#6D5BF6` |
+| Flame accent | `#FFC542` |
 | Ink (wordmark on light) | `#0F172A` |
+
+Style: fully flat vector, solid fills only (no gradients, shadows or highlights).
 
 Wordmark: Inter Display Bold, converted to outlines (no font dependency).
 
