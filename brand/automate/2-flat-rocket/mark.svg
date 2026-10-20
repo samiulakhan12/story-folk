@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-label="AutoMate">
+  <title>AutoMate</title>
+  <defs><clipPath id="am-flat-rocket-mark-h"><rect x="256" y="-200" width="600" height="1000"/></clipPath><clipPath id="am-flat-rocket-mark-n"><rect x="-200" y="-200" width="900" height="342"/></clipPath></defs>
+  <circle cx="276" cy="276" r="224" fill="#CFCBF8"/>
+  <g transform="translate(228 222) rotate(-45) scale(.84) translate(-256 -300)">
+    <path d="M256 414 C286 414 294 444 290 478 C284 530 270 574 256 626 C242 574 228 530 222 478 C218 444 226 414 256 414 Z" fill="#5FDDFB"/><path d="M256 426 C272 426 278 448 276 474 C273 506 266 534 256 570 C246 534 239 506 236 474 C234 448 240 426 256 426 Z" fill="#D2FAFF"/>
+    <path d="M188 262 C146 280 120 326 120 388 C120 408 126 424 136 432 C146 408 168 390 200 380 Z" fill="#6F7BF2"/><path d="M324 262 C366 280 392 326 392 388 C392 408 386 424 376 432 C366 408 344 390 312 380 Z" fill="#8D99FB"/>
+    <path d="M212 388 L300 388 L292 416 C291 420 288 422 284 422 L228 422 C224 422 221 420 220 416 Z" fill="#3E57D8"/>
+    <path d="M256 40 C300 66 330 130 334 220 C337 290 324 350 306 392 L206 392 C188 350 175 290 178 220 C182 130 212 66 256 40 Z" fill="#4F7CFB"/>
+    <path d="M256 40 C300 66 330 130 334 220 C337 290 324 350 306 392 L206 392 C188 350 175 290 178 220 C182 130 212 66 256 40 Z" fill="#7CA4FA" clip-path="url(#am-flat-rocket-mark-h)"/>
+    <path d="M256 40 C300 66 330 130 334 220 C337 290 324 350 306 392 L206 392 C188 350 175 290 178 220 C182 130 212 66 256 40 Z" fill="#C9F3FF" clip-path="url(#am-flat-rocket-mark-n)"/>
+    <rect x="248" y="296" width="16" height="132" rx="8" fill="#6F7BF2"/>
+    <circle cx="256" cy="204" r="46" fill="#C9F3FF"/>
+    <circle cx="256" cy="204" r="32" fill="#3D10F0"/>
+  </g>
+</svg>

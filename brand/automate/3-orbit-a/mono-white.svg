@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-label="AutoMate">
+  <title>AutoMate</title>
+  <g transform="translate(256 256) scale(1.3) translate(-252 -255)"><defs>
+    <clipPath id="am-orbit-a-white-b"><rect width="512" height="416"/></clipPath>
+    <clipPath id="am-orbit-a-white-h"><rect x="256" width="256" height="512"/></clipPath>
+    <clipPath id="am-orbit-a-white-k"><rect x="-400" y="-800" width="1400" height="1100" transform="rotate(-10 256 300)"/></clipPath>
+    <clipPath id="am-orbit-a-white-f"><rect x="-400" y="300" width="1400" height="800" transform="rotate(-10 256 300)"/></clipPath>
+    <mask id="am-orbit-a-white-ma" maskUnits="userSpaceOnUse" x="-200" y="-200" width="912" height="912"><rect x="-200" y="-200" width="912" height="912" fill="#fff"/>
+      <g clip-path="url(#am-orbit-a-white-f)"><ellipse cx="256" cy="300" rx="150" ry="44" transform="rotate(-10 256 300)" fill="none" stroke="#000" stroke-width="40"/></g>
+      <circle transform="rotate(-10 256 300)" cx="406" cy="300" r="22.64" fill="#000"/></mask>
+    <mask id="am-orbit-a-white-mb" maskUnits="userSpaceOnUse" x="-200" y="-200" width="912" height="912"><rect x="-200" y="-200" width="912" height="912" fill="#fff"/>
+      <g clip-path="url(#am-orbit-a-white-b)"><path d="M152 476 L256 136 L360 476" stroke="#000" stroke-width="102" stroke-linejoin="round" fill="none"/></g>
+      <circle transform="rotate(-10 256 300)" cx="406" cy="300" r="22.64" fill="#000"/></mask>
+    <mask id="am-orbit-a-white-md" maskUnits="userSpaceOnUse" x="-200" y="-200" width="912" height="912"><rect x="-200" y="-200" width="912" height="912" fill="#fff"/>
+      <circle transform="rotate(-10 256 300)" cx="406" cy="300" r="22.64" fill="#000"/></mask>
+  </defs>
+  
+  <g mask="url(#am-orbit-a-white-mb)"><ellipse cx="256" cy="300" rx="150" ry="44" transform="rotate(-10 256 300)" fill="none" stroke="#FFFFFF" stroke-width="22" clip-path="url(#am-orbit-a-white-k)"/></g>
+  <g mask="url(#am-orbit-a-white-ma)"><g clip-path="url(#am-orbit-a-white-b)">
+    <path d="M152 476 L256 136 L360 476" fill="none" stroke="#FFFFFF" stroke-width="84" stroke-linejoin="round"/>
+    <path d="M152 476 L256 136 L360 476" fill="none" stroke="#FFFFFF" stroke-width="84" stroke-linejoin="round" clip-path="url(#am-orbit-a-white-h)"/>
+  </g></g>
+  <g mask="url(#am-orbit-a-white-md)"><g clip-path="url(#am-orbit-a-white-f)"><ellipse cx="256" cy="300" rx="150" ry="44" transform="rotate(-10 256 300)" fill="none" stroke="#FFFFFF" stroke-width="22"/></g></g>
+  <circle transform="rotate(-10 256 300)" cx="406" cy="300" r="13.64" fill="#FFFFFF"/></g>
+</svg>
