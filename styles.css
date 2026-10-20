@@ -1,0 +1,860 @@
+/* Storyfolk: one deliberate light theme, ink on paper like a printed comic. */
+
+:root {
+	--ink: #111111;
+	--paper: #ffffff;
+	--ink-soft: #4a4a4a;
+	--dot: rgba(17, 17, 17, 0.38);
+	--font-display: "Outfit", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+	--font-body: "Lora", Georgia, "Times New Roman", serif;
+	--content: 1200px;
+	--giant: clamp(56px, 19.2vw, 400px);
+	color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	html {
+		scroll-behavior: smooth;
+	}
+}
+
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: var(--font-body);
+	font-size: 18px;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+}
+
+img {
+	display: block;
+	max-width: 100%;
+	height: auto;
+}
+
+h1,
+h2,
+h3,
+p,
+ul {
+	margin: 0;
+}
+
+h2 {
+	font-family: var(--font-display);
+	font-size: clamp(30px, 3.4vw, 44px);
+	font-weight: 800;
+	line-height: 1.08;
+	letter-spacing: -0.02em;
+	text-wrap: balance;
+}
+
+p {
+	max-width: 62ch;
+	text-wrap: pretty;
+}
+
+a {
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 3px solid var(--ink);
+	outline-offset: 3px;
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border: 0;
+}
+
+.skip-link {
+	position: absolute;
+	top: 8px;
+	left: max(16px, env(safe-area-inset-left, 0px));
+	z-index: 100;
+	padding: 10px 16px;
+	border-radius: 999px;
+	background: var(--ink);
+	color: var(--paper);
+	font: 700 14px/1 var(--font-display);
+	text-decoration: none;
+	transform: translateY(-160%);
+}
+
+.skip-link:focus {
+	transform: none;
+}
+
+/* Every band's inner wrapper: content width plus safe side gutters. */
+.wrap {
+	width: 100%;
+	max-width: calc(var(--content) + 32px);
+	margin-inline: auto;
+	padding-left: max(16px, env(safe-area-inset-left, 0px));
+	padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* Buttons */
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+	padding: 12px 22px;
+	border: 2px solid var(--ink);
+	border-radius: 999px;
+	font-family: var(--font-display);
+	font-size: 14px;
+	font-weight: 700;
+	line-height: 1.1;
+	text-decoration: none;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		transform 0.16s ease,
+		box-shadow 0.16s ease;
+}
+
+.btn-ink {
+	background: var(--ink);
+	color: var(--paper);
+}
+
+.btn-outline {
+	background: var(--paper);
+	color: var(--ink);
+}
+
+.btn:hover {
+	transform: translateY(-2px);
+	box-shadow: 3px 4px 0 var(--ink);
+}
+
+.btn-ink:hover {
+	box-shadow: 3px 4px 0 var(--ink-soft);
+}
+
+.btn:active {
+	transform: none;
+	box-shadow: none;
+}
+
+/* Cards */
+
+.card {
+	background: var(--paper);
+	color: var(--ink);
+	border: 2px solid var(--ink);
+	border-radius: 6px;
+	box-shadow: 6px 6px 0 var(--ink);
+}
+
+/* 1. Header */
+
+.site-header {
+	position: relative;
+	z-index: 10;
+	background: var(--paper);
+}
+
+.header-inner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	max-width: none;
+	padding-block: 14px;
+}
+
+@media (min-width: 1025px) {
+	.header-inner {
+		padding-left: max(24px, env(safe-area-inset-left, 0px));
+		padding-right: max(24px, env(safe-area-inset-right, 0px));
+	}
+}
+
+.brand {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	border-radius: 6px;
+	text-decoration: none;
+}
+
+.brand-mark {
+	width: 30px;
+	height: 30px;
+}
+
+.brand-word {
+	font-family: var(--font-display);
+	font-size: 21px;
+	font-weight: 800;
+	line-height: 1;
+	letter-spacing: -0.02em;
+}
+
+.site-nav {
+	display: flex;
+	align-items: center;
+	gap: 26px;
+}
+
+.nav-links {
+	display: flex;
+	align-items: center;
+	gap: 26px;
+	padding: 0;
+	list-style: none;
+}
+
+.nav-links a {
+	display: inline-block;
+	padding-block: 8px;
+	background-image: linear-gradient(currentColor, currentColor);
+	background-position: 0 calc(100% - 4px);
+	background-repeat: no-repeat;
+	background-size: 0 2px;
+	font-family: var(--font-display);
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1;
+	text-decoration: none;
+	transition: background-size 0.2s ease;
+}
+
+.nav-links a:hover {
+	background-size: 100% 2px;
+}
+
+.menu-toggle {
+	display: none;
+}
+
+/* 2. Hero */
+
+.hero {
+	overflow-x: clip;
+	padding-block: clamp(36px, 6.4vw, 92px) clamp(80px, 8.4vw, 124px);
+}
+
+.hero-inner {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+}
+
+.hero-scene {
+	position: relative;
+	width: 100%;
+	max-width: 1180px;
+	aspect-ratio: 16 / 9;
+}
+
+.hero-layer {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.hero-lede {
+	margin-top: clamp(18px, 2.2vw, 30px);
+	font-size: 19px;
+	line-height: 1.5;
+}
+
+.hero-lede + .btn {
+	margin-top: 26px;
+}
+
+/* 3. Halftone band */
+
+.band-halftone {
+	overflow-x: clip;
+	background-color: var(--paper);
+	/* A two-tone 45 degree dot screen: crisp ink dots plus softer offset dots. */
+	background-image:
+		radial-gradient(circle, var(--ink) 0 1.15px, transparent 1.65px),
+		radial-gradient(circle, var(--dot) 0 1.6px, transparent 2.1px);
+	background-position:
+		0 0,
+		4px 4px;
+	background-size: 8px 8px;
+}
+
+.about-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
+	align-items: center;
+	gap: clamp(32px, 4.4vw, 72px);
+	padding-block: clamp(72px, 8.6vw, 124px);
+}
+
+.about-card {
+	max-width: 440px;
+	padding: 40px;
+}
+
+.about-card p {
+	margin-top: 18px;
+	font-size: 17px;
+}
+
+.about-card .note {
+	margin-top: 14px;
+	color: var(--ink-soft);
+	font-style: italic;
+}
+
+.about-card .btn {
+	margin-top: 26px;
+}
+
+.about-art {
+	min-width: 0;
+}
+
+.about-art img {
+	width: 100%;
+	transform: scale(1.14);
+	transform-origin: 40% 50%;
+}
+
+/* 4. Universe */
+
+.universe {
+	padding-block: clamp(64px, 9.6vw, 140px) clamp(80px, 9vw, 132px);
+}
+
+.lineup {
+	width: 100%;
+	max-width: 1100px;
+	margin-inline: auto;
+}
+
+.split {
+	display: grid;
+	grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+	align-items: center;
+	gap: clamp(24px, 4.8vw, 72px);
+	max-width: 1100px;
+	margin: clamp(48px, 6.4vw, 96px) auto 0;
+}
+
+.split > * {
+	min-width: 0;
+}
+
+.split-copy .btn {
+	margin-top: 26px;
+}
+
+/* 5. Crowd band */
+
+.crowd-band {
+	overflow-x: clip;
+	padding-top: calc(var(--giant) * 0.06 + 8px);
+	background: var(--ink);
+	color: var(--paper);
+}
+
+.giant-word {
+	color: var(--paper);
+	font-family: var(--font-display);
+	font-size: var(--giant);
+	font-weight: 900;
+	line-height: 0.8;
+	letter-spacing: -0.045em;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.crowd-stage {
+	position: relative;
+	/* Pull the crowd up so its top row of heads (about y 80 of 1100 in crowd.svg) */
+	/* covers the bottom quarter of the wordmark's lowercase letters. */
+	margin-top: calc(var(--giant) * -0.44);
+}
+
+.crowd {
+	width: 100%;
+	min-height: 440px;
+	object-fit: cover;
+	object-position: 50% 0;
+}
+
+/* Below 640px the crowd keeps its 440px min-height and crops its sides, */
+/* so the heads stop scaling with the width. */
+@media (max-width: 640px) {
+	.crowd-stage {
+		margin-top: calc(var(--giant) * -0.18 - 32px);
+	}
+}
+
+.crowd-cards {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 372px));
+	align-content: center;
+	justify-content: center;
+	gap: 24px;
+}
+
+.crowd-card {
+	padding: 26px 28px 30px;
+	border-width: 3px;
+	border-radius: 10px;
+	box-shadow: 8px 8px 0 var(--ink);
+}
+
+.card-icon {
+	display: block;
+	width: 56px;
+	height: 56px;
+}
+
+.crowd-card h3 {
+	margin-top: 12px;
+	font-family: var(--font-display);
+	font-size: 26px;
+	font-weight: 800;
+	line-height: 1.1;
+	letter-spacing: -0.015em;
+}
+
+.crowd-card p {
+	margin-top: 10px;
+	font-size: 16px;
+	line-height: 1.55;
+}
+
+/* 6. Together */
+
+.together {
+	overflow-x: clip;
+	padding-block: clamp(64px, 8vw, 112px);
+}
+
+.together-grid {
+	display: grid;
+	grid-template-columns: minmax(0, min(62vw, 1080px)) minmax(0, 1fr);
+	align-items: center;
+	gap: clamp(28px, 4vw, 64px);
+	padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - var(--content)) / 2));
+}
+
+.together-art {
+	min-width: 0;
+}
+
+.together-art img {
+	width: 110%;
+	max-width: none;
+	margin-left: -10%;
+}
+
+.together-copy {
+	min-width: 0;
+}
+
+.together-copy h2 {
+	max-width: 6.5em;
+	font-size: clamp(34px, 3.9vw, 54px);
+}
+
+.together-copy p {
+	margin-top: 18px;
+}
+
+.together-copy .btn {
+	margin-top: 26px;
+}
+
+/* 7. Join */
+
+.join {
+	padding-block: clamp(48px, 6vw, 88px) clamp(96px, 11vw, 160px);
+}
+
+.join-inner {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+}
+
+.duo {
+	width: 340px;
+}
+
+.join h2 {
+	margin-top: 28px;
+}
+
+.join p {
+	margin-top: 16px;
+}
+
+.join .btn {
+	margin-top: 28px;
+}
+
+/* 8. Footer */
+
+.site-footer {
+	overflow-x: clip;
+	padding-block: clamp(40px, 5vw, 72px) 28px;
+}
+
+.footer-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-rows: auto 1fr;
+	grid-template-areas:
+		"main reader"
+		"lang reader";
+	column-gap: 40px;
+}
+
+.footer-main {
+	grid-area: main;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	min-width: 0;
+	padding-top: clamp(16px, 4vw, 56px);
+}
+
+.footer-word {
+	font-family: var(--font-display);
+	font-size: 44px;
+	font-weight: 800;
+	line-height: 1;
+	letter-spacing: -0.035em;
+}
+
+.footer-tagline {
+	margin-top: 6px;
+	font-size: 19px;
+}
+
+.social {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-top: 28px;
+	padding: 0;
+	list-style: none;
+}
+
+.social-link {
+	display: grid;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	background: var(--ink);
+	transition: transform 0.16s ease;
+}
+
+.social-link svg {
+	display: block;
+}
+
+.social-link:hover {
+	transform: translateY(-2px) rotate(-6deg);
+}
+
+.footer-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 28px;
+}
+
+.legal {
+	margin-top: 24px;
+	color: var(--ink-soft);
+	font-size: 14px;
+}
+
+.reader {
+	grid-area: reader;
+	align-self: end;
+	width: clamp(260px, 28vw, 400px);
+}
+
+.lang {
+	grid-area: lang;
+	position: relative;
+	align-self: end;
+	justify-self: start;
+	margin-top: 32px;
+}
+
+.lang select {
+	appearance: none;
+	min-height: 40px;
+	padding: 8px 38px 8px 14px;
+	border: 2px solid var(--ink);
+	border-radius: 6px;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: var(--font-display);
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.lang::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	right: 15px;
+	width: 7px;
+	height: 7px;
+	border-right: 2px solid var(--ink);
+	border-bottom: 2px solid var(--ink);
+	transform: translateY(-70%) rotate(45deg);
+	pointer-events: none;
+}
+
+/* Breakpoint: tablet */
+
+@media (max-width: 1024px) {
+	.about-grid {
+		grid-template-columns: minmax(0, 1fr);
+		justify-items: center;
+	}
+
+	.about-card {
+		max-width: 560px;
+	}
+
+	.about-art {
+		width: 100%;
+		max-width: 640px;
+	}
+
+	.about-art img {
+		transform: none;
+	}
+
+	.split {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 20px;
+		max-width: 640px;
+	}
+
+	.together-grid {
+		grid-template-columns: minmax(0, 1fr);
+		padding-right: 0;
+	}
+
+	.together-art {
+		width: min(100%, 900px);
+	}
+
+	.together-art img {
+		width: 108%;
+		margin-left: -8%;
+	}
+
+	.together-copy {
+		width: 100%;
+		max-width: calc(640px + 32px);
+		margin-inline: auto;
+		padding-left: max(16px, env(safe-area-inset-left, 0px));
+		padding-right: max(16px, env(safe-area-inset-right, 0px));
+	}
+
+	.together-copy h2 {
+		max-width: none;
+	}
+}
+
+/* Breakpoint: phone */
+
+@media (max-width: 760px) {
+	.site-nav {
+		gap: 8px;
+	}
+
+	.js .menu-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 44px;
+		padding: 10px 14px;
+		border: 2px solid var(--ink);
+		border-radius: 999px;
+		background: var(--paper);
+		color: var(--ink);
+		font-family: var(--font-display);
+		font-size: 14px;
+		font-weight: 700;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.menu-bars {
+		display: grid;
+		gap: 3px;
+		width: 16px;
+	}
+
+	.menu-bars span {
+		display: block;
+		height: 2px;
+		border-radius: 2px;
+		background: currentColor;
+		transition:
+			transform 0.2s ease,
+			opacity 0.2s ease;
+	}
+
+	.menu-toggle[aria-expanded="true"] .menu-bars span:nth-child(1) {
+		transform: translateY(5px) rotate(45deg);
+	}
+
+	.menu-toggle[aria-expanded="true"] .menu-bars span:nth-child(2) {
+		opacity: 0;
+	}
+
+	.menu-toggle[aria-expanded="true"] .menu-bars span:nth-child(3) {
+		transform: translateY(-5px) rotate(-45deg);
+	}
+
+	.js .nav-links {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		display: none;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0;
+		padding: 4px max(16px, env(safe-area-inset-right, 0px)) 16px
+			max(16px, env(safe-area-inset-left, 0px));
+		border-top: 2px solid var(--ink);
+		border-bottom: 3px solid var(--ink);
+		background: var(--paper);
+	}
+
+	.js .menu-toggle[aria-expanded="true"] + .nav-links {
+		display: flex;
+	}
+
+	.js .nav-links li + li {
+		border-top: 1px solid var(--ink);
+	}
+
+	.js .nav-links a {
+		display: block;
+		padding-block: 14px;
+		background-position: 0 calc(100% - 9px);
+		font-size: 18px;
+	}
+
+	/* Without the script the links simply wrap under the logo. */
+	html:not(.js) .header-inner,
+	html:not(.js) .site-nav,
+	html:not(.js) .nav-links {
+		flex-wrap: wrap;
+	}
+
+	html:not(.js) .nav-links {
+		gap: 4px 18px;
+	}
+
+	.hero-scene {
+		width: 100vw;
+		max-width: none;
+		margin-inline: calc(50% - 50vw);
+	}
+
+	.hero-lede {
+		font-size: 18px;
+	}
+
+	.about-card {
+		padding: 28px 24px 30px;
+	}
+
+	.crowd-cards {
+		position: relative;
+		inset: auto;
+		grid-template-columns: minmax(0, 420px);
+		gap: 22px;
+		margin-top: -120px;
+		padding-bottom: 56px;
+	}
+
+	.duo {
+		width: min(300px, 78%);
+	}
+
+	.footer-grid {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: none;
+		grid-template-areas:
+			"main"
+			"reader"
+			"lang";
+	}
+
+	.footer-main {
+		padding-top: 0;
+	}
+
+	.reader {
+		justify-self: center;
+		width: min(340px, 86%);
+		margin-top: 28px;
+	}
+
+	.lang {
+		margin-top: 20px;
+	}
+}
+
+/* Last, so it wins over every hover and transition above. */
+@media (prefers-reduced-motion: reduce) {
+	.btn,
+	.social-link,
+	.nav-links a,
+	.menu-bars span {
+		transition: none;
+	}
+
+	.btn:hover,
+	.social-link:hover {
+		transform: none;
+	}
+}

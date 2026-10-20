@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Storyfolk</title>
+	<meta name="claude:viewport-fit-sides" content="cover">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="description" content="Storyfolk is an independent creative collective drawing heartfelt characters and sprawling adventures for kids and grown-ups, in comics, animation, games and whatever comes next.">
+	<meta name="theme-color" content="#ffffff">
+	<link rel="icon" href="assets/logo-mark.svg" type="image/svg+xml">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&amp;family=Outfit:wght@600;700;800;900&amp;display=swap">
+	<link rel="stylesheet" href="styles.css">
+	<script>
+		document.documentElement.classList.add("js");
+		document.addEventListener("DOMContentLoaded", () => {
+			const toggle = document.querySelector(".menu-toggle");
+			const nav = toggle.closest("nav");
+			const isOpen = () => toggle.getAttribute("aria-expanded") === "true";
+			const setOpen = (open) => toggle.setAttribute("aria-expanded", String(open));
+			toggle.addEventListener("click", () => setOpen(!isOpen()));
+			nav.addEventListener("click", (event) => {
+				if (event.target.closest(".nav-links a")) setOpen(false);
+			});
+			document.addEventListener("click", (event) => {
+				if (isOpen() && !nav.contains(event.target)) setOpen(false);
+			});
+			document.addEventListener("keydown", (event) => {
+				if (event.key === "Escape" && isOpen()) {
+					setOpen(false);
+					toggle.focus();
+				}
+			});
+		});
+	</script>
+</head>
+<body id="top">
+	<a class="skip-link" href="#main">Skip to content</a>
+
+	<header class="site-header">
+		<div class="wrap header-inner">
+			<a class="brand" href="#top" aria-label="Storyfolk, back to top">
+				<img class="brand-mark" src="assets/logo-mark.svg" width="64" height="64" alt="">
+				<span class="brand-word">storyfolk</span>
+			</a>
+			<nav class="site-nav" aria-label="Main">
+				<button class="menu-toggle" type="button" aria-expanded="false" aria-controls="nav-links">
+					<span class="menu-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+					<span class="menu-label">Menu</span>
+				</button>
+				<ul class="nav-links" id="nav-links">
+					<li><a href="#art">Art</a></li>
+					<li><a href="#studio">Studio</a></li>
+					<li><a href="#grants">Grants</a></li>
+					<li><a href="#careers">Careers</a></li>
+					<li><a href="#about">About</a></li>
+				</ul>
+				<a class="btn btn-ink btn-join" href="#join">Join Us</a>
+			</nav>
+		</div>
+	</header>
+
+	<main id="main">
+		<section class="hero" aria-labelledby="hero-title">
+			<div class="wrap hero-inner">
+				<h1 id="hero-title" class="visually-hidden">Storyfolk</h1>
+				<div class="hero-scene" role="img" aria-label="The word Storyfolk hand-lettered in chunky inked capitals, with the cast perched on and around the letters: Pip holding a lantern on the T, Bolt the tin robot peeking over the O, Juniper with her spyglass on the Y, Moss the gentle forest giant leaning on the F, Nib the ink sprite floating between the rows and Captain Ribbit fishing from the L.">
+					<img class="hero-layer" src="assets/hero-letters.svg" width="1600" height="900" alt="" fetchpriority="high">
+					<img class="hero-layer" src="assets/hero-cast.svg" width="1600" height="900" alt="">
+				</div>
+				<p class="hero-lede">Drawing a wonder-filled world for the dreamer in every one of us.</p>
+				<a class="btn btn-ink" href="#join">Apply to Join</a>
+			</div>
+		</section>
+
+		<section class="band-halftone" id="about" aria-labelledby="about-title">
+			<div class="wrap about-grid">
+				<div class="card about-card">
+					<h2 id="about-title">Ink and empathy are how we build</h2>
+					<p>Storyfolk is an independent creative collective crafting heartfelt characters and sprawling adventures for readers of every age, told through comics, animation, games and whatever comes next.</p>
+					<p class="note">Field notes coming soon</p>
+					<a class="btn btn-outline" href="#about">Learn About Us</a>
+				</div>
+				<div class="about-art">
+					<img src="assets/caravan.svg" width="1000" height="800" alt="The snail caravan: a big riveted mechanical snail striding on jointed legs, its spiral shell turned into a little house with a porthole and a smoking chimney. Pip steers from the top under a patched parasol while Nib sits on the chimney." decoding="async">
+				</div>
+			</div>
+		</section>
+
+		<section class="universe" id="art" aria-labelledby="art-title">
+			<div class="wrap">
+				<img class="lineup" src="assets/lineup.svg" width="1600" height="700" alt="Five of the Storyfolk cast in a line-up: Juniper raising her spyglass, Moss the towering forest giant, Nib floating and waving, Captain Ribbit with a fish on his line, and Bolt the tin robot waving a claw." decoding="async">
+				<div class="split">
+					<h2 id="art-title">Building a world</h2>
+					<div class="split-copy">
+						<p>We are shaping the Storyfolk universe: its lands, its legends and the misfits who live there. Our aim is to win the hearts of kids and grown-ups alike with bold art, a singular vision and stories our community helps write.</p>
+						<a class="btn btn-outline" href="#art">Explore the Art</a>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section class="crowd-band" id="studio" aria-labelledby="studio-title">
+			<h2 class="giant-word" id="studio-title">
+				<span aria-hidden="true">staycurious</span>
+				<span class="visually-hidden">Stay curious</span>
+			</h2>
+			<div class="crowd-stage">
+				<img class="crowd" src="assets/crowd.svg" width="1600" height="1100" alt="A packed crowd of Storyfolk kids and creatures standing shoulder to shoulder in beanies, paper crowns, flower crowns, headphones and glasses, with a fox, a frog and a mushroom sprite among them." decoding="async">
+				<div class="wrap crowd-cards">
+					<article class="card crowd-card">
+						<svg class="card-icon" viewBox="0 0 48 48" width="56" height="56" aria-hidden="true" focusable="false">
+							<defs>
+								<pattern id="icon-dots" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+									<rect width="4" height="4" fill="#fff"/>
+									<circle cx="2" cy="2" r="0.95" fill="#111"/>
+								</pattern>
+							</defs>
+							<g fill="none" stroke="#111" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M24 44.5L11.6 27.4C9.6 23 11 17.4 15.6 13.6V8H32.4V13.6C37 17.4 38.4 23 36.4 27.4Z" fill="#fff" stroke-width="3"/>
+								<path d="M24 44.5L11.6 27.4C9.6 23 11 17.4 15.6 13.6V8H24Z" fill="url(#icon-dots)" stroke="none"/>
+								<path d="M24 44.5L11.6 27.4C9.6 23 11 17.4 15.6 13.6V8H32.4V13.6C37 17.4 38.4 23 36.4 27.4Z" stroke-width="3"/>
+								<rect x="14" y="3.5" width="20" height="5.5" rx="1.6" fill="#111" stroke-width="2.4"/>
+								<path d="M24 44V28.6" stroke-width="2.4"/>
+								<circle cx="24" cy="24.6" r="3.2" fill="#fff" stroke-width="2.4"/>
+								<path d="M15.6 13.6H32.4" stroke-width="2"/>
+							</g>
+						</svg>
+						<h3>Storyfolk Studio</h3>
+						<p>A creative studio shaping the stories, the world and the look of Storyfolk.</p>
+					</article>
+					<article class="card crowd-card" id="grants">
+						<svg class="card-icon" viewBox="0 0 48 48" width="56" height="56" aria-hidden="true" focusable="false">
+							<g fill="none" stroke="#111" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M4.5 43.5C9 36.4 16 33.6 24 33.6S39 36.4 43.5 43.5Z" fill="url(#icon-dots)" stroke-width="2.8"/>
+								<path d="M24 34.4C23.4 28 22.6 22.6 24.4 15.6" stroke-width="2.8"/>
+								<path d="M23.6 24.6C17.8 25.2 12 21.6 10.4 14.6C17 13.6 22.6 17.6 23.6 24.6Z" fill="#fff" stroke-width="2.8"/>
+								<path d="M23.4 23.6C19.6 21.8 16 19.6 13.6 16.6" stroke-width="1.6"/>
+								<path d="M24.4 17.6C27 11.2 32.8 7.6 39.6 8.6C38.4 15.4 32.2 19 24.4 17.6Z" fill="#111" stroke-width="2.4"/>
+								<ellipse cx="24.4" cy="37.4" rx="6.6" ry="4.2" fill="#111" stroke-width="2.4"/>
+								<path d="M21.4 36.2C22.6 35.2 24.2 34.9 25.8 35.2" stroke="#fff" stroke-width="1.4"/>
+							</g>
+						</svg>
+						<h3>Storyfolk Grants</h3>
+						<p>A fund that helps independent artists make their work with no strings attached.</p>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		<section class="together" id="careers" aria-labelledby="careers-title">
+			<div class="together-grid">
+				<div class="together-art">
+					<img src="assets/treehouse.svg" width="1400" height="1000" alt="A giant old tree with a treehouse village built into it: a round front door in the trunk, stairs winding up, a little shingled cabin with a smoking chimney, a rope bridge and hanging lanterns. Moss reads among the roots, Bolt climbs a ladder and Pip waves from a window." decoding="async">
+				</div>
+				<div class="together-copy">
+					<h2 id="careers-title">Making it together</h2>
+					<p>Our mission is to delight and inspire people everywhere through art, community and stories told with care.</p>
+					<a class="btn btn-outline" href="#careers">Explore Careers</a>
+				</div>
+			</div>
+		</section>
+
+		<section class="join" id="join" aria-labelledby="join-title">
+			<div class="wrap join-inner">
+				<img class="duo" src="assets/duo.svg" width="700" height="820" alt="Pip holding a lantern up high beside Juniper, who carries a tall walking staff and a map, the two of them setting out on an adventure." decoding="async">
+				<h2 id="join-title">Join the expedition</h2>
+				<p>The world can feel heavy, but there is always room for hope. Together we can make it a little brighter through art and community. We are looking for fellow dreamers, tinkerers and oddballs who believe a good story can change things.</p>
+				<a class="btn btn-ink" href="#join">Apply to Join</a>
+			</div>
+		</section>
+	</main>
+
+	<footer class="site-footer">
+		<div class="wrap footer-grid">
+			<div class="footer-main">
+				<p class="footer-word">storyfolk</p>
+				<p class="footer-tagline">stay curious. be brave.</p>
+				<ul class="social" aria-label="Storyfolk elsewhere">
+					<li>
+						<a class="social-link" href="#" aria-label="Community chat">
+							<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+								<path d="M5.4 4.6H18.6C20 4.6 21 5.6 21 7V14.2C21 15.6 20 16.6 18.6 16.6H12.4L7.6 20.2V16.6H5.4C4 16.6 3 15.6 3 14.2V7C3 5.6 4 4.6 5.4 4.6Z" fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+								<circle cx="8.2" cy="10.6" r="1.35" fill="#111"/>
+								<circle cx="12" cy="10.6" r="1.35" fill="#111"/>
+								<circle cx="15.8" cy="10.6" r="1.35" fill="#111"/>
+							</svg>
+						</a>
+					</li>
+					<li>
+						<a class="social-link" href="#" aria-label="Videos">
+							<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+								<path d="M8.4 5.6L18.8 12L8.4 18.4Z" fill="#fff" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
+							</svg>
+						</a>
+					</li>
+					<li>
+						<a class="social-link" href="#" aria-label="Photos">
+							<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+								<path d="M4.6 7.4H8L9.6 4.8H14.4L16 7.4H19.4C20.4 7.4 21 8 21 9V17.6C21 18.6 20.4 19.2 19.4 19.2H4.6C3.6 19.2 3 18.6 3 17.6V9C3 8 3.6 7.4 4.6 7.4Z" fill="#fff" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/>
+								<circle cx="12" cy="13.2" r="3.7" fill="#111"/>
+								<circle cx="12" cy="13.2" r="1.7" fill="#fff"/>
+							</svg>
+						</a>
+					</li>
+					<li>
+						<a class="social-link" href="#" aria-label="Newsletter">
+							<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+								<rect x="3" y="5.6" width="18" height="13" rx="2" fill="#fff"/>
+								<path d="M4.4 7.4L12 13.2L19.6 7.4" fill="none" stroke="#111" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+							</svg>
+						</a>
+					</li>
+				</ul>
+				<div class="footer-actions">
+					<a class="btn btn-ink" href="#join">Apply as a Member</a>
+					<a class="btn btn-outline" href="#join">Become a Partner</a>
+				</div>
+				<p class="legal">Storyfolk Collective © 2026</p>
+			</div>
+			<img class="reader" src="assets/reader.svg" width="800" height="800" alt="Wren sitting cross-legged on a tall stack of hardback books, reading with a quill tucked behind one ear and a mug of cocoa steaming beside her, while Nib peeks out of the pages." decoding="async">
+			<div class="lang">
+				<label class="visually-hidden" for="lang">Language</label>
+				<select id="lang" name="lang">
+					<option value="en" selected>English</option>
+					<option value="es" lang="es">Español</option>
+					<option value="fr" lang="fr">Français</option>
+					<option value="de" lang="de">Deutsch</option>
+				</select>
+			</div>
+		</div>
+	</footer>
+</body>
+</html>

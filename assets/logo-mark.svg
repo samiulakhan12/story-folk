@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img">
+	<title>Storyfolk mark: a friendly face peeking out of an open book</title>
+	<g stroke="#111" stroke-linecap="round" stroke-linejoin="round">
+		<!-- face -->
+		<circle cx="32" cy="27" r="15.5" fill="#fff" stroke-width="4"/>
+		<!-- hair cap with a curl on top -->
+		<path d="M17.2 23.6C18.6 15.6 24.6 11.3 32 11.3S45.4 15.6 46.8 23.6C43.4 21.4 40.6 21.8 38.3 19.4C35.6 22 29.4 22.4 26.4 19.6C23.8 22.2 20.6 21.6 17.2 23.6Z" fill="#111" stroke-width="2.5"/>
+		<path d="M31 11.6C29.4 8.6 31.2 5.4 34.6 5.6" fill="none" stroke-width="3.2"/>
+		<!-- eyes with catch-lights -->
+		<ellipse cx="25.6" cy="28.4" rx="2.7" ry="3.4" fill="#111" stroke="none"/>
+		<ellipse cx="38.4" cy="28.4" rx="2.7" ry="3.4" fill="#111" stroke="none"/>
+		<circle cx="26.5" cy="27.2" r="0.95" fill="#fff" stroke="none"/>
+		<circle cx="39.3" cy="27.2" r="0.95" fill="#fff" stroke="none"/>
+		<!-- smile -->
+		<path d="M27.2 34.6C29.8 37.4 34.2 37.4 36.8 34.6" fill="none" stroke-width="3"/>
+		<!-- book cover -->
+		<path d="M3.6 42.4V55.2C13 54.6 23.6 56.4 32 60.4C40.4 56.4 51 54.6 60.4 55.2V42.4Z" fill="#111" stroke-width="3"/>
+		<!-- pages -->
+		<path d="M6.8 39.4C15.2 37.6 25.2 38.8 32 42.6C38.8 38.8 48.8 37.6 57.2 39.4V52.2C48.8 51.2 38.8 52.6 32 56.6C25.2 52.6 15.2 51.2 6.8 52.2Z" fill="#fff" stroke-width="3.6"/>
+		<path d="M32 42.6V56.6" fill="none" stroke-width="3"/>
+		<!-- page lines -->
+		<path d="M11.6 45C16.8 44.4 22.2 45 26.4 46.8M11.6 48.6C15.4 48.2 19.4 48.6 22.6 49.6" fill="none" stroke-width="1.9"/>
+		<path d="M52.4 45C47.2 44.4 41.8 45 37.6 46.8M52.4 48.6C48.6 48.2 44.6 48.6 41.4 49.6" fill="none" stroke-width="1.9"/>
+		<!-- little hands gripping the pages -->
+		<path d="M14.6 41C14.2 37.4 16.4 35.4 19.2 35.8C21.8 36.2 22.8 38.6 22.2 40.6" fill="#fff" stroke-width="3"/>
+		<path d="M49.4 41C49.8 37.4 47.6 35.4 44.8 35.8C42.2 36.2 41.2 38.6 41.8 40.6" fill="#fff" stroke-width="3"/>
+		<path d="M18.6 37.6V39.8M45.4 37.6V39.8" fill="none" stroke-width="1.8"/>
+	</g>
+</svg>
