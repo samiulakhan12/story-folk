@@ -34,6 +34,7 @@
 			});
 		});
 	</script>
+	<script src="motion.js" defer></script>
 </head>
 <body id="top">
 	<a class="skip-link" href="#main">Skip to content</a>
@@ -65,12 +66,19 @@
 		<section class="hero" aria-labelledby="hero-title">
 			<div class="wrap hero-inner">
 				<h1 id="hero-title" class="visually-hidden">Storyfolk</h1>
-				<div class="hero-scene" role="img" aria-label="The word Storyfolk hand-lettered in chunky inked capitals, with the cast perched on and around the letters: Pip holding a lantern on the T, Bolt the tin robot peeking over the O, Juniper with her spyglass on the Y, Moss the gentle forest giant leaning on the F, Nib the ink sprite floating between the rows and Captain Ribbit fishing from the L.">
+				<div class="hero-scene sf-frame" role="img" aria-label="The word Storyfolk hand-lettered in chunky inked capitals, with the cast perched on and around the letters: Pip holding a lantern on the T, Bolt the tin robot peeking over the O, Juniper with her spyglass on the Y, Moss the gentle forest giant leaning on the F, Nib the ink sprite floating between the rows and Captain Ribbit fishing from the L.">
 					<img class="hero-layer" src="assets/hero-letters.svg" width="1600" height="900" alt="" fetchpriority="high">
-					<img class="hero-layer" src="assets/hero-cast.svg" width="1600" height="900" alt="">
+					<img class="hero-layer" src="assets/hero-cast.svg" width="1600" height="900" alt="" data-motion-base="assets/hero-cast-base.svg" data-motion="assets/hero-cast-motion.svg">
 				</div>
 				<p class="hero-lede">Drawing a wonder-filled world for the dreamer in every one of us.</p>
 				<a class="btn btn-ink" href="#join">Apply to Join</a>
+				<button class="btn btn-outline motion-toggle" type="button" data-state="playing" hidden>
+					<svg class="motion-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+						<path class="motion-icon-pause" d="M4 2.5H6.6V13.5H4ZM9.4 2.5H12V13.5H9.4Z"/>
+						<path class="motion-icon-play" d="M4.4 2.2L13.4 8L4.4 13.8Z"/>
+					</svg>
+					<span class="motion-label">Pause animations</span>
+				</button>
 			</div>
 		</section>
 
@@ -82,15 +90,17 @@
 					<p class="note">Field notes coming soon</p>
 					<a class="btn btn-outline" href="#about">Learn About Us</a>
 				</div>
-				<div class="about-art">
-					<img src="assets/caravan.svg" width="1000" height="800" alt="The snail caravan: a big riveted mechanical snail striding on jointed legs, its spiral shell turned into a little house with a porthole and a smoking chimney. Pip steers from the top under a patched parasol while Nib sits on the chimney." decoding="async">
+				<div class="about-art sf-frame">
+					<img src="assets/caravan.svg" width="1000" height="800" data-motion-base="assets/caravan-base.svg" data-motion="assets/caravan-motion.svg" alt="The snail caravan: a big riveted mechanical snail striding on jointed legs, its spiral shell turned into a little house with a porthole and a smoking chimney. Pip steers from the top under a patched parasol while Nib sits on the chimney." decoding="async">
 				</div>
 			</div>
 		</section>
 
 		<section class="universe" id="art" aria-labelledby="art-title">
 			<div class="wrap">
-				<img class="lineup" src="assets/lineup.svg" width="1600" height="700" alt="Five of the Storyfolk cast in a line-up: Juniper raising her spyglass, Moss the towering forest giant, Nib floating and waving, Captain Ribbit with a fish on his line, and Bolt the tin robot waving a claw." decoding="async">
+				<div class="lineup-frame sf-frame">
+					<img class="lineup" src="assets/lineup.svg" width="1600" height="700" data-motion-base="assets/lineup-base.svg" data-motion="assets/lineup-motion.svg" alt="Five of the Storyfolk cast in a line-up: Juniper raising her spyglass, Moss the towering forest giant, Nib floating and waving, Captain Ribbit with a fish on his line, and Bolt the tin robot waving a claw." decoding="async">
+				</div>
 				<div class="split">
 					<h2 id="art-title">Building a world</h2>
 					<div class="split-copy">
@@ -107,7 +117,9 @@
 				<span class="visually-hidden">Stay curious</span>
 			</h2>
 			<div class="crowd-stage">
-				<img class="crowd" src="assets/crowd.svg" width="1600" height="1100" alt="A packed crowd of Storyfolk kids and creatures standing shoulder to shoulder in beanies, paper crowns, flower crowns, headphones and glasses, with a fox, a frog and a mushroom sprite among them." decoding="async">
+				<div class="crowd-frame sf-frame">
+					<img class="crowd" src="assets/crowd.svg" width="1600" height="1100" data-motion-base="assets/crowd-base.svg" data-motion="assets/crowd-motion.svg" alt="A packed crowd of Storyfolk kids and creatures standing shoulder to shoulder in beanies, paper crowns, flower crowns, headphones and glasses, with a fox, a frog and a mushroom sprite among them." decoding="async">
+				</div>
 				<div class="wrap crowd-cards">
 					<article class="card crowd-card">
 						<svg class="card-icon" viewBox="0 0 48 48" width="56" height="56" aria-hidden="true" focusable="false">
@@ -152,7 +164,9 @@
 		<section class="together" id="careers" aria-labelledby="careers-title">
 			<div class="together-grid">
 				<div class="together-art">
-					<img src="assets/treehouse.svg" width="1400" height="1000" alt="A giant old tree with a treehouse village built into it: a round front door in the trunk, stairs winding up, a little shingled cabin with a smoking chimney, a rope bridge and hanging lanterns. Moss reads among the roots, Bolt climbs a ladder and Pip waves from a window." decoding="async">
+					<div class="treehouse-frame sf-frame">
+						<img src="assets/treehouse.svg" width="1400" height="1000" data-motion-base="assets/treehouse-base.svg" data-motion="assets/treehouse-motion.svg" alt="A giant old tree with a treehouse village built into it: a round front door in the trunk, stairs winding up, a little shingled cabin with a smoking chimney, a rope bridge and hanging lanterns. Moss reads among the roots, Bolt climbs a ladder and Pip waves from a window." decoding="async">
+					</div>
 				</div>
 				<div class="together-copy">
 					<h2 id="careers-title">Making it together</h2>
@@ -164,7 +178,9 @@
 
 		<section class="join" id="join" aria-labelledby="join-title">
 			<div class="wrap join-inner">
-				<img class="duo" src="assets/duo.svg" width="700" height="820" alt="Pip holding a lantern up high beside Juniper, who carries a tall walking staff and a map, the two of them setting out on an adventure." decoding="async">
+				<div class="duo-frame sf-frame">
+					<img class="duo" src="assets/duo.svg" width="700" height="820" data-motion-base="assets/duo-base.svg" data-motion="assets/duo-motion.svg" alt="Pip holding a lantern up high beside Juniper, who carries a tall walking staff and a map, the two of them setting out on an adventure." decoding="async">
+				</div>
 				<h2 id="join-title">Join the expedition</h2>
 				<p>The world can feel heavy, but there is always room for hope. Together we can make it a little brighter through art and community. We are looking for fellow dreamers, tinkerers and oddballs who believe a good story can change things.</p>
 				<a class="btn btn-ink" href="#join">Apply to Join</a>
@@ -219,7 +235,9 @@
 				</div>
 				<p class="legal">Storyfolk Collective © 2026</p>
 			</div>
-			<img class="reader" src="assets/reader.svg" width="800" height="800" alt="Wren sitting cross-legged on a tall stack of hardback books, reading with a quill tucked behind one ear and a mug of cocoa steaming beside her, while Nib peeks out of the pages." decoding="async">
+			<div class="reader-frame sf-frame">
+				<img class="reader" src="assets/reader.svg" width="800" height="800" data-motion-base="assets/reader-base.svg" data-motion="assets/reader-motion.svg" alt="Wren sitting cross-legged on a tall stack of hardback books, reading with a quill tucked behind one ear and a mug of cocoa steaming beside her, while Nib peeks out of the pages." decoding="async">
+			</div>
 			<div class="lang">
 				<label class="visually-hidden" for="lang">Language</label>
 				<select id="lang" name="lang">
