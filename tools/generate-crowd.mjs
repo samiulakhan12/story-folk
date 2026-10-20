@@ -1,11 +1,18 @@
-// Storyfolk crowd band: writes assets/crowd.svg, a dense crowd of original kid and creature
-// busts for the black "staycurious" band. A seeded PRNG picks every part, so the output is
-// stable from run to run. Run from the repository root: node tools/generate-crowd.mjs
+// Storyfolk crowd band: a dense crowd of original kid and creature busts for the black
+// "staycurious" band. A seeded PRNG picks every part, so the output is stable from run to run.
+// Run from any directory: node tools/generate-crowd.mjs. One run writes three files:
+//   assets/crowd.svg         the complete still (motion off, no-JS fallback, reference)
+//   assets/crowd-base.svg    the still minus the open eyes, which leaves the face skin bare
+//   assets/crowd-motion.svg  only the open eyes, which blink and glance; base + motion at rest
+//                            reproduce the still
 
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const OUT = fileURLToPath(new URL("../assets/crowd.svg", import.meta.url));
+const asset = (name) => fileURLToPath(new URL(`../assets/${name}`, import.meta.url));
+const OUT = asset("crowd.svg");
+const OUT_BASE = asset("crowd-base.svg");
+const OUT_MOTION = asset("crowd-motion.svg");
 const SEED = 20261020;
 
 const INK = "#111";
@@ -257,6 +264,29 @@ function faceGeo(h, k) {
 	return { ex: h.rx * 0.37, ey, er, eh, my: ey + eh + 12, lx: k.look };
 }
 
+// ------------------------------------------------------------------ moving eyes
+
+// While a figure is drawn, `figure` gathers its open eyes. Each one leaves a token in the
+// drawing: the still puts the eye back there, the base leaves the face skin under it bare, and
+// the motion layer draws the eyes again on their own so they can blink and glance.
+let figure = { eyes: [], tilt: 0, cy: 0 };
+const OPEN_EYES = new Set(["open", "wide"]);
+const EYE_TOKEN = /\u0000(\d+)\u0000/g;
+
+/** An eye centred on (x, y) in head space; open ones move, drawn-closed ones stay put. */
+function blinker(kind, markup, x, y) {
+	if (!OPEN_EYES.has(kind)) return markup;
+	figure.eyes.push({ markup, x, y });
+	return `\u0000${figure.eyes.length - 1}\u0000`;
+}
+
+/** The head's tilt about its neck point (0, cy), remembered so the eyes can follow it. */
+function headTurn(k, cy) {
+	figure.tilt = Number(f(k.tilt));
+	figure.cy = Number(f(cy));
+	return `rotate(${f(k.tilt)} 0 ${f(cy)})`;
+}
+
 // ------------------------------------------------------------------ faces
 
 const EXPRESSIONS = {
@@ -418,7 +448,8 @@ function drawFace(h, k, hide = [false, false]) {
 	}
 	[-1, 1].forEach((s, i) => {
 		const x = s * g.ex + g.lx;
-		if (!hide[i]) out.push(eye(ex.eyes[i], x, g.ey, g.er, g.eh, s));
+		const kind = ex.eyes[i];
+		if (!hide[i]) out.push(blinker(kind, eye(kind, x, g.ey, g.er, g.eh, s), x, g.ey));
 		const by = g.ey - g.eh - 8 + (ex.brow ?? 0);
 		out.push(taper(x - 7, by + 1.5, x + s * 0.5, by - 2.6, x + 7, by + 1.5, 2.6));
 	});
@@ -1644,7 +1675,7 @@ function kid(k) {
 	const yn = h.ryb + 6;
 	const hair = HAIR[k.hair](h, k.hairFill, k.side, k);
 	const hat = k.hat ? HATS[k.hat](h, k) : {};
-	const tilt = `rotate(${f(k.tilt)} 0 ${f(h.ryb)})`;
+	const tilt = headTurn(k, h.ryb);
 	const hide =
 		k.eyewear === "shades" ? [true, true] : k.eyewear === "patch" ? [false, true] : [false, false];
 	const head = [
@@ -1706,7 +1737,8 @@ function robot(k) {
 		if (expr.eyes[i] === "happy" || expr.eyes[i] === "calm") {
 			head.push(ink(p`M${x - 8} ${g.ey + 3}Q${x} ${g.ey - 11} ${x + 8} ${g.ey + 3}`, 4.2, W));
 		} else {
-			head.push(oval(x, g.ey, 7, 9, W) + circle(x + 2, g.ey - 3, 2.6, INK));
+			const screenEye = oval(x, g.ey, 7, 9, W) + circle(x + 2, g.ey - 3, 2.6, INK);
+			head.push(blinker("open", screenEye, x, g.ey));
 		}
 	});
 	head.push(ink(p`M-9 ${g.ey + 15}Q0 ${g.ey + 23} 9 ${g.ey + 15}`, 3.4, W));
@@ -1719,7 +1751,7 @@ function robot(k) {
 		[0, -50],
 	])
 		head.push(circle(x, y, 2.4, INK));
-	out.push(group(head.join(""), `rotate(${f(k.tilt)} 0 50)`));
+	out.push(group(head.join(""), headTurn(k, 50)));
 	return out.join("");
 }
 
@@ -1754,7 +1786,8 @@ function frog(k) {
 	head.push(clipped(d, k.skin.sh, 4.4, inner));
 	[-1, 1].forEach((s, i) => {
 		const kind = expr.eyes[i] === "calm" ? "happy" : expr.eyes[i];
-		head.push(eye(kind, s * 31 + k.look, -44, 9.4, 11.4, s));
+		const x = s * 31 + k.look;
+		head.push(blinker(kind, eye(kind, x, -44, 9.4, 11.4, s), x, -44));
 		head.push(circle(s * 6, -14, 2, INK));
 		head.push(oval(s * 44, 16, 9.5, 6, DM));
 	});
@@ -1762,7 +1795,7 @@ function frog(k) {
 	if (expr.mouth === "tongue" || expr.mouth === "open" || expr.mouth === "grin") {
 		head.push(shape("M-7 18C-8 30 8 30 7 18Z", W, 2.4) + ink("M0 20L0 25", 1.5));
 	}
-	out.push(group(head.join(""), `rotate(${f(k.tilt)} 0 50)`));
+	out.push(group(head.join(""), headTurn(k, 50)));
 	return out.join("");
 }
 
@@ -1826,7 +1859,8 @@ function fox(k) {
 	head.push(ink("M-60 24l8 -2M-62 32l7 0M60 24l-8 -2M62 32l-7 0", 1.6));
 	const expr = EXPRESSIONS[k.expr];
 	for (const [i, s] of [-1, 1].entries()) {
-		head.push(eye(expr.eyes[i], s * g.ex + g.lx, g.ey, g.er, g.eh, s));
+		const x = s * g.ex + g.lx;
+		head.push(blinker(expr.eyes[i], eye(expr.eyes[i], x, g.ey, g.er, g.eh, s), x, g.ey));
 	}
 	const ny = g.ey + g.eh + 4;
 	head.push(
@@ -1845,7 +1879,7 @@ function fox(k) {
 		drawTorso(k, yn) +
 		clipped(p`M-13 40L-13.5 ${yn + 2}Q0 ${yn + 10} 13.5 ${yn + 2}L13 40Z`, HA, 3.4, "") +
 		scarf(yn, k);
-	return torso + group(head.join(""), `rotate(${f(k.tilt)} 0 ${f(h.ryb)})`);
+	return torso + group(head.join(""), headTurn(k, h.ryb));
 }
 
 function shroom(k) {
@@ -1912,7 +1946,7 @@ function shroom(k) {
 		),
 		clipped(cap, DM, 4.4, capIn),
 	];
-	out.push(group(head.join(""), `rotate(${f(k.tilt)} 0 ${f(h.ryb)})`));
+	out.push(group(head.join(""), headTurn(k, h.ryb)));
 	return out.join("");
 }
 
@@ -2190,12 +2224,16 @@ const PETALS = [
 	[-5.7, -1.9],
 ];
 
-const DEFS = [
-	"<defs>",
-	'<filter id="ink" x="-3%" y="-3%" width="106%" height="106%">',
+const INK_WOBBLE = [
 	'<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"/>',
 	'<feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" xChannelSelector="R" ' +
 		'yChannelSelector="G"/>',
+];
+
+const DEFS = [
+	"<defs>",
+	'<filter id="ink" x="-3%" y="-3%" width="106%" height="106%">',
+	...INK_WOBBLE,
 	"</filter>",
 	// White outline round the whole crowd, so the back row's ink edge shows on the black band.
 	'<filter id="halo" x="-3%" y="-6%" width="106%" height="112%">',
@@ -2224,39 +2262,193 @@ function describe(k) {
 	return [k.hat ?? "bare", k.hair, k.eyewear, k.expr].filter(Boolean).join(", ");
 }
 
+// ------------------------------------------------------------------ motion layer
+
+// The open eyes again, alone on a transparent sheet laid over the base. A pivot on each face's
+// eye line, tilted with the head, squashes its eyes shut for a blink. A third of the faces also
+// glance now and then, inside the `sf-look` group that the page moves to follow the cursor. The
+// eyes are drawn in root space under their own small ink filter, so at rest their wobble is
+// exactly the base's.
+
+const seconds = (ms) => String(+(ms / 1000).toFixed(2));
+const pct = (ms, dur) => `${+((ms / dur) * 100).toFixed(2)}%`;
+const nudge = ([x, y]) => (x || y ? `translate(${f(x)}px,${f(y)}px)` : "none");
+
+/** A loop that rests open, then blinks at each start (ms): 70 ms shut, 60 held, 100 open. */
+function blinkKeys(name, dur, starts) {
+	const open = starts.flatMap((t) => [pct(t, dur), pct(t + 230, dur)]);
+	const shut = starts.flatMap((t) => [pct(t + 70, dur), pct(t + 130, dur)]);
+	const rest = ["0%", ...open, "100%"].join(",");
+	return `@keyframes ${name}{${rest}{transform:none}${shut.join(",")}{transform:scaleY(.1)}}`;
+}
+
+/** A loop that rests centred and passes through each [ms, [dx, dy]] stop in turn. */
+function glanceKeys(name, dur, stops) {
+	const steps = stops.map(([t, at]) => `${pct(t, dur)}{transform:${nudge(at)}}`);
+	return `@keyframes ${name}{0%,100%{transform:none}${steps.join("")}}`;
+}
+
+/** Head-space point (x, y) of figure `k`, tilted `tilt` degrees about (0, cy), in root space. */
+function rootPoint(k, tilt, cy, x, y) {
+	const a = (tilt * Math.PI) / 180;
+	const s = Number(k.s.toFixed(3));
+	const dx = x * Math.cos(a) - (y - cy) * Math.sin(a);
+	const dy = cy + x * Math.sin(a) + (y - cy) * Math.cos(a);
+	return [Number(f(k.x)) + s * dx, Number(f(k.y)) + s * dy];
+}
+
+/** Wraps root-space `body` in a pivot on root point (x, y), turned `tilt` degrees. */
+function pivot(cls, [x, y], tilt, body) {
+	return (
+		`<g transform="translate(${f(x)} ${f(y)}) rotate(${f(tilt)})"><g class="${cls}">` +
+		`<g transform="rotate(${f(-tilt)}) translate(${f(-x)} ${f(-y)})">${body}</g></g></g>`
+	);
+}
+
+function motionLayer(faces, crowd) {
+	for (const face of faces) {
+		const { k, eyes, tilt, cy } = face;
+		const x = eyes.reduce((sum, e) => sum + e.x, 0) / eyes.length;
+		face.pivot = rootPoint(k, tilt, cy, x, eyes[0].y);
+	}
+	// Glancers: a third of each row, one in each band across the picture, among faces whose eyes
+	// are inside it with both eyes open (or one beside an eye patch).
+	plan = mulberry32(SEED + 4);
+	const lookers = new Set();
+	const canLook = ({ k, eyes, pivot: [x] }) =>
+		k.kind !== "robot" && (eyes.length === 2 || k.eyewear === "patch") && x > 40 && x < 1560;
+	ROWS.forEach((_, r) => {
+		const quota = Math.round(crowd.filter((k) => k.r === r).length / 3);
+		for (let band = 0; band < quota; band++) {
+			const free = faces.filter((face) => face.k.r === r && canLook(face) && !lookers.has(face));
+			const inBand = free.filter(
+				(face) => Math.floor(((face.pivot[0] - 40) / 1520) * quota) === band,
+			);
+			const pool = inBand.length ? inBand : free;
+			if (pool.length) lookers.add(pick(pool));
+		}
+	});
+	const rules = [];
+	const keys = [];
+	const parts = faces.map((face, n) => {
+		const { k, eyes, tilt, cy } = face;
+		plan = mulberry32(SEED * 11 + n * 7907);
+		const dur = Math.round(between(4, 9) * 100) * 10;
+		const starts = chance(0.22) ? [dur / 2, dur / 2 + 370] : [dur / 2];
+		const delay = Math.round(between(0, dur) / 10) * 10;
+		const timing = `${seconds(dur)}s ease-in-out -${seconds(delay)}s infinite`;
+		rules.push(`.cr-b${n}{animation:cr-b${n} ${timing}}`);
+		keys.push(blinkKeys(`cr-b${n}`, dur, starts));
+		const blink = `cr-blink cr-b${n}`;
+		const frame = `${face.at} rotate(${f(tilt)} 0 ${f(cy)})`;
+		// Each eye's first shape is the eyeball. Its catch-lights (or a screen eye's pupil) squash
+		// a second time inside it, so a shut eye reads as one solid line.
+		const cut = eyes.map(({ markup }) => markup.indexOf("/>") + 2);
+		const balls = eyes.map(({ markup }, i) => markup.slice(0, cut[i])).join("");
+		const lights = eyes.map(({ markup }, i) => markup.slice(cut[i])).join("");
+		const inner = pivot(blink, face.pivot, tilt, `<g transform="${frame}">${lights}</g>`);
+		let part = `<g filter="url(#ink)"><g transform="${frame}">${balls}</g>${inner}</g>`;
+		if (lookers.has(face)) {
+			// Solid ink eyes shift a little within the face; glasses leave less room above and below.
+			const reach = (k.kind === "frog" ? 4 : k.eyewear === "glasses" ? 2.6 : 3.4) * k.s;
+			const look = Number(f(reach));
+			const glance = Math.round(between(6, 9) * 100) * 10;
+			const side = chance(0.5) ? 1 : -1;
+			const first = [side * look * between(0.85, 1), look * between(-0.3, 0.25)];
+			let t = Math.round(between(0.08, 0.3) * glance);
+			const stops = [[t, [0, 0]]];
+			const hold = (ms, at) => {
+				stops.push([(t += 380), at], [(t += ms), at]);
+			};
+			hold(between(1000, 1700), first);
+			if (chance(0.3)) {
+				hold(between(600, 900), [-first[0] * between(0.7, 0.95), look * between(-0.25, 0.25)]);
+			}
+			stops.push([t + 420, [0, 0]]);
+			const lag = Math.round(between(0, glance) / 10) * 10;
+			rules.push(
+				`.cr-g${n}{animation:cr-g${n} ${seconds(glance)}s cubic-bezier(.45,0,.55,1) ` +
+					`-${seconds(lag)}s infinite}`,
+			);
+			keys.push(glanceKeys(`cr-g${n}`, glance, stops));
+			part = `<g class="sf-look" data-look="${look}"><g class="cr-glance cr-g${n}">${part}</g></g>`;
+		}
+		return `<!-- ${describe(k)} -->${pivot(blink, face.pivot, tilt, part)}`;
+	});
+	return [
+		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" width="1600" height="1100" ' +
+			'aria-hidden="true">',
+		"<defs>",
+		'<filter id="ink" x="-30%" y="-30%" width="160%" height="160%">',
+		...INK_WOBBLE,
+		"</filter>",
+		"</defs>",
+		"<style>",
+		".cr-blink{transform-origin:0 0}",
+		...rules,
+		...keys,
+		"@media (prefers-reduced-motion: reduce) {",
+		".cr-blink,.cr-glance{animation:none!important}",
+		"}",
+		"</style>",
+		...parts,
+		"</svg>",
+		"",
+	].join("\n");
+}
+
 function build() {
 	const crowd = castCrowd();
+	const faces = [];
 	const rows = ROWS.map((_, r) => {
 		const figures = crowd
 			.map((k, i) => [k, i])
 			.filter(([k]) => k.r === r)
 			.map(([k, i]) => {
 				jit = mulberry32(SEED + i * 7919);
+				figure = { eyes: [], tilt: 0, cy: 0 };
 				const body = DRAW[k.kind](k);
 				const at = `translate(${f(k.x)} ${f(k.y)}) scale(${k.s.toFixed(3)})`;
-				return `<!-- ${describe(k)} --><g transform="${at}">${body}</g>`;
+				const { eyes } = figure;
+				if (eyes.length) faces.push({ ...figure, k, at });
+				// [still, base]: the base leaves out every eye that moves
+				return [true, false].map((open) => {
+					const drawn = body.replace(EYE_TOKEN, (_, n) => (open ? eyes[n].markup : ""));
+					return `<!-- ${describe(k)} --><g transform="${at}">${drawn}</g>`;
+				});
 			});
-		return `<!-- row ${r + 1} -->\n<g>${figures.join("\n")}</g>`;
+		return [0, 1].map(
+			(j) => `<!-- row ${r + 1} -->\n<g>${figures.map((g) => g[j]).join("\n")}</g>`,
+		);
 	});
 	// Paper behind every row below the back row's shoulders, so no black shows through.
 	const top = ROWS[0];
 	const underTop = Math.round(top.y + top.s * 128);
-	return [
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" width="1600" height="1100" ' +
-			'role="img">',
-		"<title>A dense, cheerful crowd of original Storyfolk kids and creatures in hats, hoods, " +
-			"glasses and headphones, with two robots, two foxes, a frog, bear-hooded kids and a " +
-			"mushroom sprite peeking out among them</title>",
-		DEFS,
-		`<rect x="-40" y="${underTop}" width="1680" height="${1140 - underTop}" fill="#fff"/>`,
-		'<g filter="url(#halo)"><g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">',
-		rows.join("\n"),
-		"</g></g>",
-		"</svg>",
-		"",
-	].join("\n");
+	const page = (j) =>
+		[
+			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" width="1600" ' +
+				'height="1100" role="img">',
+			"<title>A dense, cheerful crowd of original Storyfolk kids and creatures in hats, hoods, " +
+				"glasses and headphones, with two robots, two foxes, a frog, bear-hooded kids and a " +
+				"mushroom sprite peeking out among them</title>",
+			DEFS,
+			`<rect x="-40" y="${underTop}" width="1680" height="${1140 - underTop}" fill="#fff"/>`,
+			'<g filter="url(#halo)">' +
+				'<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">',
+			rows.map((row) => row[j]).join("\n"),
+			"</g></g>",
+			"</svg>",
+			"",
+		].join("\n");
+	return { still: page(0), base: page(1), motion: motionLayer(faces, crowd) };
 }
 
-const svg = build();
-writeFileSync(OUT, svg);
-console.log(`wrote ${OUT} (${(svg.length / 1024).toFixed(0)} KB)`);
+const out = build();
+for (const [path, svg] of [
+	[OUT, out.still],
+	[OUT_BASE, out.base],
+	[OUT_MOTION, out.motion],
+]) {
+	writeFileSync(path, svg);
+	console.log(`wrote ${path} (${(svg.length / 1024).toFixed(0)} KB)`);
+}

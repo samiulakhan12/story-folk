@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Builds ../assets/lineup.svg: the Storyfolk character line-up sheet.
+"""Builds the Storyfolk character line-up sheet as three files in ../assets/:
+
+  lineup.svg         the complete still (the no-motion / no-JS image)
+  lineup-base.svg    the still minus every moving part (filters kept)
+  lineup-motion.svg  only the moving parts, transparent, with their CSS idle animation;
+                     at rest, base + motion reproduce lineup.svg
 
 Juniper, Moss, Nib, Captain Ribbit and Bolt stand side by side on a shared ground line,
 each with a halftone shadow. All path data is hand-written; Python only places groups,
 clip paths and repeated ink texture (rivets, flicks, tufts, braid lobes).
+
+Each character function returns a list of nodes. A plain string at the top level is
+static art; a Part marks art that moves (its strings are the moving shapes), and Static /
+Split / Group nodes say what goes where when the still is split into base and motion.
 
 Dependencies: Python 3 standard library only.  Run:  python3 tools/generate-lineup.py
 """
@@ -12,7 +21,10 @@ import os
 import random
 import re
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "lineup.svg")
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
+OUT = os.path.join(ASSETS, "lineup.svg")
+OUT_BASE = os.path.join(ASSETS, "lineup-base.svg")
+OUT_MOTION = os.path.join(ASSETS, "lineup-motion.svg")
 INK = "#111"
 W = "#fff"
 DL, DM, DD, HA, CH = ("url(#dots-light)", "url(#dots-mid)", "url(#dots-dark)",
@@ -236,6 +248,180 @@ def ground_marks(x0, x1, seed, y=2):
     return "".join(out)
 
 
+# --- still / base / motion split ---------------------------------------------
+class Static:
+    """static art sitting inside a Part's list (kept in the base, left out of the motion)"""
+
+    def __init__(self, s):
+        self.s = s
+
+
+class Split:
+    """art drawn one way in the still, another in the base and another in the motion layer"""
+
+    def __init__(self, still, base, motion):
+        self.still, self.base, self.motion = still, base, motion
+
+
+class Pad:
+    """motion only: an empty rect that widens the bounding box (and so the ink filter
+    region) of a thin moving shape, so the displaced ink is not cut off"""
+
+    def __init__(self, x0, y0, x1, y1):
+        self.s = f'<rect x="{n(x0)}" y="{n(y0)}" width="{n(x1 - x0)}" height="{n(y1 - y0)}" fill="none"/>'
+
+
+class Group:
+    """<g transform="tr"> around nodes; in the motion layer the transform moves onto the art"""
+
+    def __init__(self, tr, kids):
+        self.tr, self.kids = tr, kids
+
+
+class Part:
+    """moving art. cls: animation class (lu-...), pivot: joint (x, y) in the current frame,
+    look: R for a cursor-following <g class="sf-look">, clip: motion-only clip path (character
+    frame; needs a mask), mask: (black silhouettes of the static art drawn above this part in
+    the still, region), both in the character frame, base: what the base draws in its place
+    (default: its Static kids)"""
+
+    def __init__(self, cls, kids, pivot=None, look=None, clip=None, mask=None, base=None):
+        self.cls, self.kids, self.pivot, self.look = cls, kids, pivot, look
+        self.clip, self.mask, self.base = clip, mask, base
+
+
+def occ(d, sw, filled=True):
+    """black silhouette of a static shape (fill + outline) for a motion mask"""
+    return f'<path d="{d}" fill="{"#000" if filled else "none"}" stroke="#000" stroke-width="{n(sw)}"/>'
+
+
+def r_still(nodes):
+    out = []
+    for nd in nodes:
+        if isinstance(nd, str):
+            out.append(nd)
+        elif isinstance(nd, Static):
+            out.append(nd.s)
+        elif isinstance(nd, Split):
+            out.append(nd.still)
+        elif isinstance(nd, Group):
+            out.append(f'<g transform="{nd.tr}">{r_still(nd.kids)}</g>')
+        elif isinstance(nd, Part):
+            out.append(r_still(nd.kids))
+    return "".join(out)
+
+
+def r_base(nodes, moving=False):
+    out = []
+    for nd in nodes:
+        if isinstance(nd, str):
+            out.append("" if moving else nd)
+        elif isinstance(nd, Static):
+            out.append(nd.s)
+        elif isinstance(nd, Split):
+            out.append(nd.base)
+        elif isinstance(nd, Group):
+            inner = r_base(nd.kids, moving)
+            out.append(f'<g transform="{nd.tr}">{inner}</g>' if inner else "")
+        elif isinstance(nd, Part):
+            out.append(nd.base if nd.base is not None else r_base(nd.kids, True))
+    return "".join(out)
+
+
+def mat(a, b):
+    """a after b, SVG matrix order (a b c d e f)"""
+    return (a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3],
+            a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5])
+
+
+def parse_tr(s):
+    m = (1, 0, 0, 1, 0, 0)
+    for name, args in re.findall(r"(\w+)\(([^)]*)\)", s):
+        v = [float(x) for x in re.split(r"[\s,]+", args.strip())]
+        if name == "translate":
+            t = (1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0)
+        elif name == "scale":
+            t = (v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0)
+        else:
+            a = math.radians(v[0])
+            t = (math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0, 0)
+            if len(v) == 3:
+                t = mat((1, 0, 0, 1, v[1], v[2]), mat(t, (1, 0, 0, 1, -v[1], -v[2])))
+        m = mat(m, t)
+    return m
+
+
+def apply(m, p):
+    return (m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5])
+
+
+class Motion:
+    """renders the motion layer: every moving part as pivot wrappers in root coordinates,
+    each run of shapes in its own ink-filter group, so the turbulence (anchored to user space)
+    displaces it exactly as in the still"""
+
+    def __init__(self):
+        self.defs = []
+        self.k = 0
+
+    def uid(self, kind):
+        self.k += 1
+        return f"lu-{kind}{self.k}"
+
+    def render(self, nodes, tr, m, moving=False):
+        out, run = [], []
+
+        def flush():
+            if run:
+                out.append(f'<g filter="url(#ink)"><g transform="{tr}">{"".join(run)}</g></g>')
+                run.clear()
+
+        for nd in nodes:
+            if isinstance(nd, str):
+                if moving:
+                    run.append(nd)
+            elif isinstance(nd, Pad):
+                if moving:
+                    run.append(nd.s)
+            elif isinstance(nd, Split):
+                if moving and nd.motion:
+                    run.append(nd.motion)
+            elif isinstance(nd, Group):
+                flush()
+                out.append(self.render(nd.kids, f"{tr} {nd.tr}", mat(m, parse_tr(nd.tr)), moving))
+            elif isinstance(nd, Part):
+                flush()
+                out.append(self.part(nd, tr, m))
+        flush()
+        return "".join(out)
+
+    def part(self, p, tr, m):
+        s = self.render(p.kids, tr, m, True)
+        if p.look is not None:
+            s = f'<g class="sf-look" data-look="{n(p.look)}">{s}</g>'
+        elif p.cls and p.pivot:
+            x, y = apply(m, p.pivot)
+            s = (f'<g transform="translate({x:.2f} {y:.2f})"><g class="{p.cls}">'
+                 f'<g transform="translate({-x:.2f} {-y:.2f})">{s}</g></g></g>')
+        elif p.cls:
+            s = f'<g class="{p.cls}">{s}</g>'
+        if p.mask:
+            # the mask silhouettes go through the same ink filter as the still, so their
+            # edges wobble exactly like the static art they stand for
+            ox, oy = m[4], m[5]
+            shapes, (x0, y0, x1, y1) = p.mask
+            k = self.uid("mask")
+            x0, y0, x1, y1 = x0 + ox, y0 + oy, x1 + ox, y1 + oy
+            keep = (f'<path d="{p.clip}" fill="#fff"/>' if p.clip else
+                    f'<rect x="{n(x0 - ox)}" y="{n(y0 - oy)}" width="{n(x1 - x0)}" height="{n(y1 - y0)}" fill="#fff"/>')
+            self.defs.append(
+                f'<mask id="{k}" maskUnits="userSpaceOnUse" x="{n(x0)}" y="{n(y0)}" width="{n(x1 - x0)}" '
+                f'height="{n(y1 - y0)}"><g filter="url(#ink)" stroke-linecap="round" stroke-linejoin="round">'
+                f'<g transform="translate({n(ox)} {n(oy)})">{keep}{shapes}</g></g></mask>')
+            s = f'<g mask="url(#{k})">{s}</g>'
+        return s
+
+
 # =============================================================================
 # JUNIPER: aviator cap, braids, spyglass to her eye, hand on hip, map satchel
 # local origin = ground point between her feet; about 430 tall
@@ -359,12 +545,14 @@ def juniper():
     # free arm (her right, viewer left) hangs down holding an unrolled map
     o.append(S("M-34 -296C-56 -300 -72 -282 -75 -254L-48 -250C-46 -262 -44 -270 -42 -278Z", W, 4.4,
                F("M-82 -276L-62 -276L-60 -246L-82 -246Z", DL) + L("M-60 -286Q-56 -278 -58 -268", 1.6)))
-    o.append(S("M-76 -252L-49 -250C-51 -236 -55 -222 -57 -210L-79 -211C-80 -226 -79 -240 -76 -252Z", W, 4.2,
-               F(rect(-62, -256, -44, -206), DL)))
-    o.append(S(rrect(-81, -259, -45, -244, 5), W, 3.2, F(rect(-58, -262, -40, -240), DM)
-               + stitches("M-78 -251.5L-48 -251.5", 1.2)))
+    # forearm, cuff, map and fist sway from the elbow; the map flutters from the fist
+    arm = [S("M-76 -252L-49 -250C-51 -236 -55 -222 -57 -210L-79 -211C-80 -226 -79 -240 -76 -252Z", W, 4.2,
+             F(rect(-62, -256, -44, -206), DL))]
+    arm.append(S(rrect(-81, -259, -45, -244, 5), W, 3.2, F(rect(-58, -262, -40, -240), DM)
+                 + stitches("M-78 -251.5L-48 -251.5", 1.2)))
     mapd = "M-102 -212L-32 -214C-30 -190 -31 -166 -34 -148L-100 -146C-103 -168 -104 -190 -102 -212Z"
-    o.append(S(mapd, W, 3.8,
+    mp = []
+    mp.append(S(mapd, W, 3.8,
                F("M-58 -220L-24 -220L-24 -140L-52 -140C-50 -166 -52 -194 -58 -220Z", DL)
                + L("M-67 -213L-66 -147", 1.4, extra='stroke-dasharray="5 4"')
                + L("M-92 -198C-80 -194 -84 -180 -72 -176C-60 -172 -62 -162 -50 -160", 1.8,
@@ -375,19 +563,41 @@ def juniper():
                + ray(-46, -198, -90, 0, 9, 1.6) + ray(-46, -198, 90, 0, 6, 1.4)
                + ray(-46, -198, 0, 0, 6, 1.4) + ray(-46, -198, 180, 0, 6, 1.4)
                + L("M-96 -204Q-90 -206 -84 -204", 1.3) + L("M-40 -180Q-36 -176 -40 -172", 1.3)))
-    o.append(P(tube([(-101, -146), (-33, -149)], 13, 12), W, 3.4) + E(-101, -146, 3.4, 6.6, W, 2.6)
-             + L("M-101 -149Q-98.5 -146 -101 -143", 1.2) + F(tube([(-80, -143), (-34, -145)], 6, 5), DL))
+    mp.append(P(tube([(-101, -146), (-33, -149)], 13, 12), W, 3.4) + E(-101, -146, 3.4, 6.6, W, 2.6)
+              + L("M-101 -149Q-98.5 -146 -101 -143", 1.2) + F(tube([(-80, -143), (-34, -145)], 6, 5), DL))
+    arm.append(Part("lu-jun-map", mp, pivot=(-68, -212)))
     fist_l = "M-82 -218C-82 -230 -55 -232 -53 -218C-51 -204 -59 -197 -68 -197C-77 -197 -84 -205 -82 -218Z"
-    o.append(S(fist_l, W, 3.8, F("M-60 -234L-46 -234L-46 -194L-64 -194C-58 -202 -56 -220 -60 -234Z", DL)
-               + L("M-78 -214Q-73 -211 -69 -214M-78 -206Q-73 -203 -69 -206", 1.5)))
-    # spyglass arm (her left) upper sleeve, raised elbow
-    o.append(S("M28 -298C50 -314 82 -320 102 -314L108 -290C86 -290 64 -280 44 -266Z", W, 4.4,
-               F("M56 -330L120 -330L120 -280L70 -284C66 -300 62 -316 56 -330Z", DM)
-               + L("M62 -300Q70 -294 70 -286", 1.6)))
+    arm.append(S(fist_l, W, 3.8, F("M-60 -234L-46 -234L-46 -194L-64 -194C-58 -202 -56 -220 -60 -234Z", DL)
+                 + L("M-78 -214Q-73 -211 -69 -214M-78 -206Q-73 -203 -69 -206", 1.5)))
+    o.append(Part("lu-jun-arm", arm, pivot=(-63, -251)))
 
-    # braids hanging over the shoulders
-    o.append(braid([(-52, -308), (-57, -282), (-56, -256), (-50, -232)]))
-    o.append(braid([(58, -308), (63, -282), (62, -256), (56, -234)]))
+    # static art drawn above the spyglass sleeve and the braids (their motion masks)
+    head_d, flap_l, flap_r = (circ(4, -345, 58), "M-65 -358C-76 -336 -74 -304 -57 -293C-45 -289 -38 -300 -41 -352Z",
+                              "M73 -360C82 -338 80 -306 63 -295C51 -291 45 -302 49 -354Z")
+    strap_d, buckle_d = "M-52 -294Q-50 -280 -40 -274", "M-44 -280L-36 -277L-38 -270L-46 -273Z"
+    spy_pivot = (32, -312)
+
+    def near(k, art, cx, cy, r):
+        """base copy of a moving part's root, where it tucks under static art: hides the
+        anti-aliased seam along the mask edge; the moving copy barely moves this close in"""
+        return (f'<clipPath id="lu-root{k}"><circle cx="{n(cx)}" cy="{n(cy)}" r="{n(r)}"/></clipPath>'
+                f'<g clip-path="url(#lu-root{k})">{art}</g>')
+
+    # spyglass arm (her left) upper sleeve, raised elbow
+    sleeve = S("M28 -298C50 -314 82 -320 102 -314L108 -290C86 -290 64 -280 44 -266Z", W, 4.4,
+               F("M56 -330L120 -330L120 -280L70 -284C66 -300 62 -316 56 -330Z", DM)
+               + L("M62 -300Q70 -294 70 -286", 1.6))
+    o.append(Part("lu-jun-spy", [sleeve], pivot=spy_pivot, base=near(1, sleeve, 40, -300, 16),
+                  mask=(occ(head_d, 4.8) + occ(flap_r, 4.4), (10, -420, 130, -250))))
+
+    # braids hanging over the shoulders, swaying from under the ear flaps
+    bl = braid([(-52, -308), (-57, -282), (-56, -256), (-50, -232)])
+    o.append(Part("lu-jun-braid-l", [bl], pivot=(-53, -304), base=near(2, bl, -51, -298, 22),
+                  mask=(occ(head_d, 4.8) + occ(flap_l, 4.4) + occ(strap_d, 3.2, False) + occ(buckle_d, 2),
+                        (-90, -340, -10, -190))))
+    br = braid([(58, -308), (63, -282), (62, -256), (56, -234)])
+    o.append(Part("lu-jun-braid-r", [br], pivot=(59, -304), base=near(3, br, 58, -298, 16),
+                  mask=(occ(head_d, 4.8) + occ(flap_r, 4.4), (20, -340, 100, -190))))
 
     # head
     o.append(S(circ(4, -345, 58), W, 4.8, F(circ(4, -345, 58), DL) + P(circ(-3, -351, 58), W, 0)))
@@ -412,7 +622,9 @@ def juniper():
     o.append(S(flap_r, HA, 4.4, stitches("M69 -350C76 -332 74 -312 64 -302")))
     o.append(L("M-52 -294Q-50 -280 -40 -274", 3.2) + P("M-44 -280L-36 -277L-38 -270L-46 -273Z", W, 2))
     # features: open left eye, brow raised over the eyepiece, grin, blush
-    o.append(E(-20, -335, 7.6, 10.2, INK) + C(-22.8, -339, 2.9, W) + C(-16.8, -330.5, 1.2, W))
+    o.append(Part("lu-jun-blink", [Part(None, [Part("lu-jun-glance", [
+        E(-20, -335, 7.6, 10.2, INK) + C(-22.8, -339, 2.9, W) + C(-16.8, -330.5, 1.2, W)])], look=2.5)],
+        pivot=(-20, -335)))
     o.append(T(-33, -353, -22, -361, -10, -355, 2.7))
     o.append(T(14, -360, 25, -368, 37, -363, 2.5))
     o.append(L("M3 -327Q9 -322 4 -316", 2.6))
@@ -422,11 +634,11 @@ def juniper():
     o.append(T(-18, -310, -20, -307, -20, -303, 1.6) + T(22, -310, 25, -308, 25, -304, 1.6))
 
     # spyglass forearm (bare), rolled cuff at the raised elbow
-    o.append(S("M97 -292C84 -310 70 -328 55 -344L69 -356C82 -340 98 -322 112 -306Z", W, 4.2,
-               F("M70 -362L90 -362L118 -308L102 -296Z", DL)))
-    o.append(g(S("M-14 -7C-14 -10 14 -10 14 -7L14 7C14 10 -14 10 -14 7Z", W, 3.2,
-                 F(rect(3, -12, 18, 12), DM) + stitches("M-12 0L12 0", 1.2)),
-               "translate(104 -300) rotate(72)"))
+    spy = [S("M97 -292C84 -310 70 -328 55 -344L69 -356C82 -340 98 -322 112 -306Z", W, 4.2,
+             F("M70 -362L90 -362L118 -308L102 -296Z", DL))]
+    spy.append(g(S("M-14 -7C-14 -10 14 -10 14 -7L14 7C14 10 -14 10 -14 7Z", W, 3.2,
+                   F(rect(3, -12, 18, 12), DM) + stitches("M-12 0L12 0", 1.2)),
+                 "translate(104 -300) rotate(72)"))
     # the spyglass, eyepiece cupped to her left eye, tilted up and out
     sg = (S(rrect(-6, -12, 11, 12, 4), DD, 3.2, L("M-2 -12L-2 12", 1.4, W))
           + S(rect(10, -10.5, 46, 10.5), W, 3.4, F(rect(10, 3, 46, 12), DM) + L("M14 -6L42 -6", 1.6, W)
@@ -439,13 +651,15 @@ def juniper():
               + L("M102 -9L132 -11", 1.8, W) + L("M110 -14L110 14M124 -16L124 16", 1.2))
           + P(rect(134, -20, 142, 20), DD, 3)
           + E(143, 0, 3.8, 19, DL, 3))
-    o.append(g(sg, "translate(28 -338) rotate(-32)"))
-    o.append(sparkle(162, -436, 13, 2.4) + T(168, -404, 176, -400, 184, -404, 1.6))
+    spy.append(g(sg, "translate(28 -338) rotate(-32)"))
+    spy.append(Part("lu-jun-twinkle", [sparkle(162, -436, 13, 2.4)], pivot=(162, -436)))
+    spy.append(T(168, -404, 176, -400, 184, -404, 1.6))
     fist = "M47 -362C49 -374 70 -377 75 -364C79 -351 72 -340 60 -340C49 -340 44 -351 47 -362Z"
-    o.append(S(fist, W, 4, F("M64 -380L84 -380L84 -336L62 -336C70 -346 70 -364 64 -380Z", DL)
-               + L("M50 -358Q56 -355 61 -360M49 -350Q55 -347 61 -352", 1.6)))
-    o.append(T(58, -371, 52, -374, 47, -369, 2.4))  # thumb over the barrel
-    return "".join(o)
+    spy.append(S(fist, W, 4, F("M64 -380L84 -380L84 -336L62 -336C70 -346 70 -364 64 -380Z", DL)
+                 + L("M50 -358Q56 -355 61 -360M49 -350Q55 -347 61 -352", 1.6)))
+    spy.append(T(58, -371, 52, -374, 47, -369, 2.4))  # thumb over the barrel
+    o.append(Part("lu-jun-spy", spy, pivot=spy_pivot))
+    return o
 
 
 # =============================================================================
@@ -545,7 +759,9 @@ def moss():
     # face
     o.append(P("M-72 -458Q-66 -470 -57 -464Q-50 -472 -42 -465Q-36 -459 -42 -455Q-57 -452 -72 -456Z", DM, 2.4))
     o.append(P("M16 -458Q22 -470 31 -464Q38 -472 46 -465Q52 -459 46 -455Q31 -452 16 -456Z", DM, 2.4))
-    o.append(E(-54, -436, 6, 8, INK) + E(32, -436, 6, 8, INK) + C(-55.8, -438.8, 2, W) + C(30.2, -438.8, 2, W))
+    o.append(Part("lu-moss-blink", [Part(None, [Part("lu-moss-glance", [
+        E(-54, -436, 6, 8, INK) + E(32, -436, 6, 8, INK) + C(-55.8, -438.8, 2, W) + C(30.2, -438.8, 2, W)])],
+        look=3)], pivot=(-11, -436)))
     o.append(S("M-14 -432C-24 -430 -26 -413 -16 -408C-6 -403 7 -409 7 -418C7 -428 -4 -434 -14 -432Z", W, 3.4,
                F("M-6 -436L12 -436L12 -400L-12 -400C-2 -408 0 -424 -6 -436Z", HA)))
     o.append(L("M-86 -394Q-10 -342 70 -394", 4.2))
@@ -560,21 +776,24 @@ def moss():
     hand_l = "M-204 -262C-212 -238 -200 -214 -180 -212C-162 -210 -150 -222 -152 -240C-154 -256 -168 -266 -186 -266Z"
     thumb_l = "M-160 -250C-150 -256 -140 -250 -142 -240C-144 -232 -152 -230 -158 -234Z"
     patch = scallop([(-184, -336), (-166, -344), (-152, -324), (-164, -306), (-182, -312)], 0.3)
-    o.append(S(larm, W, 5, F("M-210 -390L-130 -390C-160 -360 -176 -320 -180 -280L-210 -280Z", DL)
+    arm_l = [S(larm, W, 5, F("M-210 -390L-130 -390C-160 -360 -176 -320 -180 -280L-210 -280Z", DL)
                + F("M-160 -380C-150 -340 -150 -290 -156 -236L-130 -236L-130 -380Z", DM)
                + F(patch, DL) + L(patch, 1.8)
-               + flicks((-196, -360, -156, -270), 8, 31, (3, 6), (30, 70), 1.3)))
-    o.append(S(thumb_l, W, 3.6, F(rect(-152, -258, -136, -226), DM)))
-    o.append(S(hand_l, W, 4.6, F("M-166 -270L-146 -270L-146 -206L-176 -206C-162 -216 -158 -244 -166 -270Z", DM)
-               + L("M-196 -228Q-192 -218 -184 -216M-184 -232Q-180 -222 -172 -220", 2)))
-    o.append(S(rarm, W, 5, F("M130 -390L210 -390L210 -236L150 -236C152 -290 148 -340 130 -390Z", DM)
+               + flicks((-196, -360, -156, -270), 8, 31, (3, 6), (30, 70), 1.3))]
+    arm_l.append(S(thumb_l, W, 3.6, F(rect(-152, -258, -136, -226), DM)))
+    arm_l.append(S(hand_l, W, 4.6, F("M-166 -270L-146 -270L-146 -206L-176 -206C-162 -216 -158 -244 -166 -270Z", DM)
+                   + L("M-196 -228Q-192 -218 -184 -216M-184 -232Q-180 -222 -172 -220", 2)))
+    o.append(Part("lu-moss-arm-l", arm_l, pivot=(-132, -372)))
+    arm_r = [S(rarm, W, 5, F("M130 -390L210 -390L210 -236L150 -236C152 -290 148 -340 130 -390Z", DM)
                + F("M178 -390L210 -390L210 -236L192 -236C198 -290 194 -340 178 -390Z", DD)
                + E(178, -330, 8, 6, W, 2) + F(ell(181, -328, 5, 4), HA)
-               + flicks((158, -360, 196, -270), 8, 32, (3, 6), (30, 70), 1.3)))
-    o.append(S(mir(thumb_l), W, 3.6, F(rect(136, -258, 160, -226), DM)))
-    o.append(S(mir(hand_l), W, 4.6, F("M166 -270L214 -270L214 -206L170 -206C182 -220 182 -246 166 -270Z", DM)
-               + L("M196 -228Q192 -218 184 -216M184 -232Q180 -222 172 -220", 2)))
-    o.append(tufts((-180, -378, -140, -366), 3, 41, 6, 1.5) + tufts((140, -378, 180, -366), 3, 42, 6, 1.5))
+               + flicks((158, -360, 196, -270), 8, 32, (3, 6), (30, 70), 1.3))]
+    arm_r.append(S(mir(thumb_l), W, 3.6, F(rect(136, -258, 160, -226), DM)))
+    arm_r.append(S(mir(hand_l), W, 4.6, F("M166 -270L214 -270L214 -206L170 -206C182 -220 182 -246 166 -270Z", DM)
+                   + L("M196 -228Q192 -218 184 -216M184 -232Q180 -222 172 -220", 2)))
+    o.append(Part("lu-moss-arm-r", arm_r, pivot=(132, -372)))
+    o.append(Part("lu-moss-arm-l", [tufts((-180, -378, -140, -366), 3, 41, 6, 1.5)], pivot=(-132, -372)))
+    o.append(Part("lu-moss-arm-r", [tufts((140, -378, 180, -366), 3, 42, 6, 1.5)], pivot=(132, -372)))
 
     # boulder feet with pebble toes
     foot_l = "M-152 -56C-166 -34 -154 -2 -120 0L-46 0C-24 -2 -20 -32 -34 -52C-58 -72 -128 -72 -152 -56Z"
@@ -590,24 +809,27 @@ def moss():
     o.append(tufts((-140, -72, -60, -62), 4, 61, 6, 1.6) + tufts((60, -72, 140, -62), 4, 62, 6, 1.6))
 
     # stem and the big leaf, growing out of the crown
-    o.append(P("M-2 -546C-4 -568 -6 -588 -14 -604L-6 -609C2 -592 8 -570 10 -546Z", W, 3.4))
-    o.append(tuft(-6, -546, 9, 2) + tuft(10, -548, 8, 2))
+    stem = [P("M-2 -546C-4 -568 -6 -588 -14 -604L-6 -609C2 -592 8 -570 10 -546Z", W, 3.4)]
+    stem.append(tuft(-6, -546, 9, 2) + tuft(10, -548, 8, 2))
     leaf = "M-10 -604C-40 -640 -130 -646 -180 -604C-130 -584 -50 -584 -10 -604Z"
-    o.append(S(leaf, W, 4.6, F("M-190 -604C-130 -606 -60 -606 0 -604L0 -570L-190 -570Z", DM)
+    lf = [S(leaf, W, 4.6, F("M-190 -604C-130 -606 -60 -606 0 -604L0 -570L-190 -570Z", DM)
                + L("M-10 -604C-60 -610 -120 -612 -176 -604", 2.6)
                + "".join(L(f"M{x} {y}Q{x - 9} {y - 11} {x - 24} {y - 15}", 1.7) for x, y in
                          ((-36, -606), (-70, -609), (-104, -610), (-136, -609)))
                + "".join(L(f"M{x} {y}Q{x - 9} {y + 7} {x - 20} {y + 9}", 1.5) for x, y in
                          ((-50, -607), (-86, -609), (-120, -609)))
-               + L("M-40 -626Q-80 -636 -120 -630", 1.8, W)))
-    o.append(T(-180, -604, -186, -604, -192, -600, 2.2))
+               + L("M-40 -626Q-80 -636 -120 -630", 1.8, W))]
+    lf.append(T(-180, -604, -186, -604, -192, -600, 2.2))
+    stem.append(Part("lu-moss-leaf", lf, pivot=(-10, -605)))
+    o.append(Part("lu-moss-stem", stem, pivot=(4, -547)))
     # a snail exploring his right foot
-    snail = g(P("M-18 0C-20 -6 -14 -9 -6 -8L14 -8C22 -8 26 -4 28 0Z", W, 2.6)
-              + S(circ(2, -16, 11), W, 3, F(circ(5, -13, 9), DM) + L("M2 -16m-5 0a5 5 0 1 0 5 -5", 1.6))
-              + L("M-14 -8L-17 -18M-10 -8L-10 -19", 1.8) + C(-17, -19, 2, INK) + C(-10, -20, 2, INK),
-              "translate(94 -64) rotate(-6)")
+    snail = Group("translate(94 -64) rotate(-6)", [
+        P("M-18 0C-20 -6 -14 -9 -6 -8L14 -8C22 -8 26 -4 28 0Z", W, 2.6)
+        + S(circ(2, -16, 11), W, 3, F(circ(5, -13, 9), DM) + L("M2 -16m-5 0a5 5 0 1 0 5 -5", 1.6)),
+        Part("lu-moss-snail", [L("M-14 -8L-17 -18M-10 -8L-10 -19", 1.8) + C(-17, -19, 2, INK) + C(-10, -20, 2, INK)],
+             pivot=(-12, -8))])
     o.append(snail)
-    return "".join(o)
+    return o
 
 
 # =============================================================================
@@ -615,34 +837,44 @@ def moss():
 # =============================================================================
 def nib():
     o = []
-    for (x, y, r, a) in ((-62, -64, 6.2, -40), (70, -96, 5.4, 30), (-66, 50, 4.6, -120), (80, 50, 4.2, 115),
-                         (-46, -102, 3.8, -20), (40, -124, 3.4, 15), (96, 4, 3.4, 90), (-30, 96, 3, 190)):
-        o.append(drop(x, y, r, a))
-    o.append(C(-52, 82, 2.6, INK) + C(60, 86, 2.2, INK) + C(-30, -124, 2, INK) + C(100, -40, 2.4, INK)
-             + C(-74, -24, 1.8, INK) + C(104, 28, 1.8, INK))
+    for i, (x, y, r, a) in enumerate(((-62, -64, 6.2, -40), (70, -96, 5.4, 30), (-66, 50, 4.6, -120),
+                                      (80, 50, 4.2, 115), (-46, -102, 3.8, -20), (40, -124, 3.4, 15),
+                                      (96, 4, 3.4, 90), (-30, 96, 3, 190))):
+        o.append(Part(f"lu-nib-d{i + 1}", [drop(x, y, r, a)]))  # each droplet drifts on its own
+    o.append(Part("lu-nib-specks", [C(-52, 82, 2.6, INK) + C(60, 86, 2.2, INK) + C(-30, -124, 2, INK)
+                                    + C(100, -40, 2.4, INK) + C(-74, -24, 1.8, INK) + C(104, 28, 1.8, INK)]))
     body = "M0 -80C10 -60 44 -34 44 0C44 28 24 46 0 46C-24 46 -44 28 -44 0C-44 -34 -10 -60 0 -80Z"
+    # the whole sprite bobs and tilts; everything below lives inside that float
+    k = []
     # arms first so the shoulder joins disappear into the body
-    o.append(L("M-38 12Q-52 22 -58 12", 7.5) + C(-60, 9, 6.2, INK) + C(-64, 3, 2.8, INK))
-    o.append(L("M38 -6Q56 -16 62 -40", 7.5) + C(63, -45, 7, INK) + C(56, -51, 3.4, INK))
-    o.append(L("M76 -66Q86 -56 84 -42", 2.2) + L("M84 -72Q96 -58 92 -40", 2) + L("M44 -66Q46 -74 52 -78", 2))
-    o.append(P(body, INK, 4.6))
-    o.append(T(-34, -4, -36, -30, -15, -52, 6.2, W) + C(-34, 8, 3, W) + C(-30, 17, 1.6, W))
-    o.append(T(36, 14, 34, 32, 16, 40, 2.4, W))
+    k.append(Part("lu-nib-arm", [L("M-38 12Q-52 22 -58 12", 7.5) + C(-60, 9, 6.2, INK) + C(-64, 3, 2.8, INK)],
+                  pivot=(-38, 12)))
+    k.append(Part("lu-nib-wave", [L("M38 -6Q56 -16 62 -40", 7.5) + C(63, -45, 7, INK) + C(56, -51, 3.4, INK)],
+                  pivot=(38, -6)))
+    k.append(Part("lu-nib-marks", [L("M76 -66Q86 -56 84 -42", 2.2) + L("M84 -72Q96 -58 92 -40", 2)
+                                   + L("M44 -66Q46 -74 52 -78", 2)]))
+    k.append(P(body, INK, 4.6))
+    k.append(T(-34, -4, -36, -30, -15, -52, 6.2, W) + C(-34, 8, 3, W) + C(-30, 17, 1.6, W))
+    k.append(T(36, 14, 34, 32, 16, 40, 2.4, W))
     nibd = "M0 -126C5 -116 17 -102 18 -90L15 -76C9 -72 -9 -72 -15 -76L-18 -90C-17 -102 -5 -116 0 -126Z"
-    o.append(S(nibd, W, 3.6, F("M1 -130L22 -130L22 -70L1 -70Z", DM) + L("M0 -122L0 -96", 2.4) + C(0, -93, 3.2, INK)
-               + L("M-15 -82Q0 -77 15 -82", 2.2) + L("M-12 -100Q-8 -90 -9 -82M12 -100Q8 -90 9 -82", 1.4)
-               + L("M-6 -116L-10 -104", 1.6, W)))
-    # face
-    o.append(C(-16, -4, 15.5, W) + C(17, -4, 15.5, W))
-    o.append(C(-12, 0, 7.8, INK) + C(21, 0, 7.8, INK))
-    o.append(C(-14.8, -3.2, 3, W) + C(18.2, -3.2, 3, W) + C(-9.6, 3.2, 1.2, W) + C(23.4, 3.2, 1.2, W))
-    o.append(T(-28, -26, -18, -32, -7, -27, 2.8, W) + T(8, -27, 18, -33, 29, -26, 2.8, W))
-    o.append(P("M-9 16Q2 34 13 16Q2 20 -9 16Z", W, 0) + P("M-3 24Q2 29 7 24Q2 22 -3 24Z", DL, 0))
+    k.append(Part("lu-nib-tuft", [S(nibd, W, 3.6, F("M1 -130L22 -130L22 -70L1 -70Z", DM) + L("M0 -122L0 -96", 2.4)
+                                    + C(0, -93, 3.2, INK) + L("M-15 -82Q0 -77 15 -82", 2.2)
+                                    + L("M-12 -100Q-8 -90 -9 -82M12 -100Q8 -90 9 -82", 1.4)
+                                    + L("M-6 -116L-10 -104", 1.6, W))], pivot=(0, -75)))
+    # face: the pair of eyes blinks together, pupils look around
+    k.append(Part("lu-nib-blink", [C(-16, -4, 15.5, W) + C(17, -4, 15.5, W), Part(None, [Part("lu-nib-glance", [
+        C(-12, 0, 7.8, INK) + C(21, 0, 7.8, INK),
+        C(-14.8, -3.2, 3, W) + C(18.2, -3.2, 3, W) + C(-9.6, 3.2, 1.2, W) + C(23.4, 3.2, 1.2, W)])], look=4)],
+        pivot=(0.5, -4)))
+    k.append(T(-28, -26, -18, -32, -7, -27, 2.8, W) + T(8, -27, 18, -33, 29, -26, 2.8, W))
+    k.append(P("M-9 16Q2 34 13 16Q2 20 -9 16Z", W, 0) + P("M-3 24Q2 29 7 24Q2 22 -3 24Z", DL, 0))
     for bx in (-33, 30):
-        o.append("".join(T(bx + d, 22, bx + d + 2, 17, bx + d + 4, 12, 1.9, W) for d in (0, 5, 10)))
+        k.append("".join(T(bx + d, 22, bx + d + 2, 17, bx + d + 4, 12, 1.9, W) for d in (0, 5, 10)))
+    o.append(Part("lu-nib-bob", [Part("lu-nib-tilt", k, pivot=(0, -10))]))
     # floating motion lines
-    o.append(L("M-26 62Q0 70 26 62", 2.6) + L("M-16 74Q0 79 16 74", 2.3) + L("M-7 85Q0 87 7 85", 2))
-    return "".join(o)
+    o.append(Part("lu-nib-lines", [L("M-26 62Q0 70 26 62", 2.6) + L("M-16 74Q0 79 16 74", 2.3)
+                                   + L("M-7 85Q0 87 7 85", 2)], pivot=(0, 70)))
+    return o
 
 
 # =============================================================================
@@ -659,33 +891,40 @@ def ribbit():
     tip = (butt[0] + ux * 378, butt[1] + uy * 378)
     tipx, tipy = tip
 
-    # line, bobber, hooked fish (behind everything else)
+    # line, bobber, hooked fish (behind everything else); all of it hangs from the rod tip
     hook = (tipx + 5, -432)
-    o.append(L(f"M{n(tipx)} {n(tipy)}Q{n(tipx + 6)} {n((tipy + hook[1]) / 2)} {n(hook[0])} {n(hook[1])}", 1.8))
+    line = [L(f"M{n(tipx)} {n(tipy)}Q{n(tipx + 6)} {n((tipy + hook[1]) / 2)} {n(hook[0])} {n(hook[1])}", 1.8),
+            Pad(tipx - 6, tipy - 4, hook[0] + 6, hook[1] + 4)]
     by = tipy + (hook[1] - tipy) * 0.42
     bx = tipx + 4
-    o.append(S(circ(bx, by, 8), W, 3, F(rect(bx - 10, by, bx + 10, by + 10), HA)) + L(f"M{n(bx)} {n(by - 8)}L{n(bx)} {n(by - 14)}", 2.6))
-    fish = g(L("M0 -6Q5 -1 2 4", 2)
-             + P("M-10 40L-20 58Q-7 52 -1 60L-3 42Z", W, 3.2)
-             + S("M0 2C10 4 16 14 15 26C14 36 7 42 -1 44C-9 42 -15 34 -15 24C-15 12 -9 3 0 2Z", W, 4,
-                 F("M4 -2L20 -2L20 48L4 48Z", DM)
-                 + L("M-8 20Q-3 24 2 20M-7 28Q-2 32 4 28M-4 36Q1 39 6 36", 1.5))
-             + C(-5, 13, 3.6, INK) + C(-6.2, 11.8, 1.2, W) + E(2, 6, 3, 2, INK)
-             + P("M13 20L23 15L20 28Z", W, 2.6),
-             f"translate({n(hook[0])} {n(hook[1])}) rotate(12)")
-    o.append(fish)
+    line.append(Part("lu-rib-bobber", [S(circ(bx, by, 8), W, 3, F(rect(bx - 10, by, bx + 10, by + 10), HA))
+                                       + L(f"M{n(bx)} {n(by - 8)}L{n(bx)} {n(by - 14)}", 2.6)]))
+    fish = Group(f"translate({n(hook[0])} {n(hook[1])}) rotate(12)", [
+        L("M0 -6Q5 -1 2 4", 2),
+        Part("lu-rib-tail", [P("M-10 40L-20 58Q-7 52 -1 60L-3 42Z", W, 3.2)], pivot=(-6, 41)),
+        S("M0 2C10 4 16 14 15 26C14 36 7 42 -1 44C-9 42 -15 34 -15 24C-15 12 -9 3 0 2Z", W, 4,
+          F("M4 -2L20 -2L20 48L4 48Z", DM)
+          + L("M-8 20Q-3 24 2 20M-7 28Q-2 32 4 28M-4 36Q1 39 6 36", 1.5))
+        + C(-5, 13, 3.6, INK) + C(-6.2, 11.8, 1.2, W) + E(2, 6, 3, 2, INK)
+        + P("M13 20L23 15L20 28Z", W, 2.6)])
+    line.append(Part("lu-rib-fish", [fish], pivot=hook))
     fy = hook[1]
-    o.append(L(f"M{n(tipx - 22)} {n(fy + 18)}Q{n(tipx - 27)} {n(fy + 28)} {n(tipx - 22)} {n(fy + 38)}", 2.2)
-             + L(f"M{n(tipx + 32)} {n(fy + 14)}Q{n(tipx + 37)} {n(fy + 24)} {n(tipx + 32)} {n(fy + 34)}", 2.2)
-             + drop(tipx + 24, fy + 62, 3, 160) + drop(tipx - 14, fy + 70, 2.4, 200))
+    line.append(Part("lu-rib-splash", [
+        L(f"M{n(tipx - 22)} {n(fy + 18)}Q{n(tipx - 27)} {n(fy + 28)} {n(tipx - 22)} {n(fy + 38)}", 2.2)
+        + L(f"M{n(tipx + 32)} {n(fy + 14)}Q{n(tipx + 37)} {n(fy + 24)} {n(tipx + 32)} {n(fy + 34)}", 2.2)]))
+    line.append(Part("lu-rib-drip", [drop(tipx + 24, fy + 62, 3, 160) + drop(tipx - 14, fy + 70, 2.4, 200)]))
+    rod = [Part("lu-rib-line", line, pivot=(tipx, tipy))]
 
-    # rod beyond the shoulder (behind head and hat)
+    # rod beyond the shoulder (behind head and hat); its tip above the hat brim twitches
     rod_hi = tube([shoulder, tip], 6.4, 2.4)
-    o.append(P(rod_hi, INK, 1.2))
+    knee = (shoulder[0] + (tipx - shoulder[0]) * 0.5, shoulder[1] + (tipy - shoulder[1]) * 0.5)
+    rod.append(Split(P(rod_hi, INK, 1.2), P(tube([shoulder, knee], 6.4, 4.4), INK, 1.2),
+                     P(tube([knee, tip], 4.4, 2.4), INK, 1.2)))
     for t in (0.45, 0.75):
         x, y = shoulder[0] + (tipx - shoulder[0]) * t, shoulder[1] + (tipy - shoulder[1]) * t
-        o.append(C(x + 3, y + 1, 2.6, W, 1.6))
-    o.append(C(tipx + 1, tipy, 2.4, W, 1.6))
+        rod.append(C(x + 3, y + 1, 2.6, W, 1.6) if t > 0.5 else Static(C(x + 3, y + 1, 2.6, W, 1.6)))
+    rod.append(C(tipx + 1, tipy, 2.4, W, 1.6))
+    o.append(Part("lu-rib-rod", rod, pivot=knee))
 
     # stubby legs and webbed feet
     for s in (-1, 1):
@@ -735,30 +974,35 @@ def ribbit():
                + L("M-20 -281Q0 -275 20 -281", 1.6)))
     o.append(T(-72, -298, -77, -299, -79, -305, 2.3) + T(72, -298, 77, -299, 79, -305, 2.3))
     o.append(E(-58, -288, 11, 6, DL) + E(58, -288, 11, 6, DL))
-    # droopy-lidded eyes inside the domes
+    # droopy-lidded eyes inside the domes; the lid slides down to blink, the pupil looks around
+    brim = ("M-128 -308C-132 -344 -72 -382 2 -382C76 -382 134 -344 130 -308C128 -298 118 -298 114 -306"
+            "C102 -332 64 -358 2 -358C-60 -358 -98 -332 -110 -306C-114 -298 -124 -298 -128 -308Z")
     for ex, px in ((-38, -33), (40, 45)):
         ey, er = -341, 21
         k = nid()
         o.append(f'<clipPath id="{k}"><path d="{circ(ex, ey, er)}"/></clipPath>')
         o.append(C(ex, ey, er, W))
-        o.append(f'<g clip-path="url(#{k})">'
-                 + E(px, ey + 8, 8.4, 8.4, INK) + C(px - 2.6, ey + 5.4, 2.6, W) + C(px + 3, ey + 11.2, 1.1, W)
-                 + P(f"M{ex - er - 2} {ey - er - 2}L{ex + er + 2} {ey - er - 2}L{ex + er + 2} {ey + 1}"
-                     f"Q{ex} {ey + 9} {ex - er - 2} {ey + 1}Z", W, 0)
-                 + F(f"M{ex - er - 2} {ey - 6}Q{ex} {ey + 2} {ex + er + 2} {ey - 6}L{ex + er + 2} {ey + 1}"
-                     f"Q{ex} {ey + 9} {ex - er - 2} {ey + 1}Z", DL)
-                 + F(f"M{ex + 6} {ey - er - 2}L{ex + er + 2} {ey - er - 2}L{ex + er + 2} {ey + 2}L{ex + 10} {ey}Z", HA)
-                 + "</g>")
-        o.append(L(f"M{ex - er + 1} {ey + 1}Q{ex} {ey + 10} {ex + er - 1} {ey + 1}", 3.6))
-        o.append(P(circ(ex, ey, er), "none", 2.6))
+        lid = (P(f"M{ex - er - 2} {ey - er - 2}L{ex + er + 2} {ey - er - 2}L{ex + er + 2} {ey + 1}"
+                 f"Q{ex} {ey + 9} {ex - er - 2} {ey + 1}Z", W, 0)
+               + F(f"M{ex - er - 2} {ey - 6}Q{ex} {ey + 2} {ex + er + 2} {ey - 6}L{ex + er + 2} {ey + 1}"
+                   f"Q{ex} {ey + 9} {ex - er - 2} {ey + 1}Z", DL)
+               + F(f"M{ex + 6} {ey - er - 2}L{ex + er + 2} {ey - er - 2}L{ex + er + 2} {ey + 2}L{ex + 10} {ey}Z", HA))
+        o.append(Part(None, [
+            Static(f'<g clip-path="url(#{k})">'),
+            Part(None, [Part("lu-rib-glance", [
+                E(px, ey + 8, 8.4, 8.4, INK) + C(px - 2.6, ey + 5.4, 2.6, W) + C(px + 3, ey + 11.2, 1.1, W)])], look=4),
+            Part("lu-rib-lid", [lid], base=lid),
+            Static("</g>"),
+            Part("lu-rib-lid", [L(f"M{ex - er + 1} {ey + 1}Q{ex} {ey + 10} {ex + er - 1} {ey + 1}", 3.6),
+                                Pad(ex - er, ey - 6, ex + er, ey + 16)]),
+            Static(P(circ(ex, ey, er), "none", 2.6))],
+            clip=circ(ex, ey, er - 1.3), mask=(occ(brim, 4.8), (ex - 30, ey - 30, ex + 30, ey + 30))))
     # sou'wester hat pulled down over the eye domes: crown, then the wide brim
     crown = "M-50 -374C-52 -408 -24 -420 2 -420C30 -420 56 -408 54 -374Z"
     o.append(S(crown, W, 4.8, F("M26 -426C48 -414 58 -398 56 -372L38 -372C42 -392 38 -410 26 -426Z", HA)
                + L("M-16 -418C-22 -404 -24 -390 -24 -376M20 -420C24 -406 26 -390 26 -376", 1.8)
                + L("M-32 -404Q-26 -414 -14 -417", 1.8))
              + S(circ(2, -420, 5.5), W, 2.8, F(circ(5, -418, 4.5), DM)))
-    brim = ("M-128 -308C-132 -344 -72 -382 2 -382C76 -382 134 -344 130 -308C128 -298 118 -298 114 -306"
-            "C102 -332 64 -358 2 -358C-60 -358 -98 -332 -110 -306C-114 -298 -124 -298 -128 -308Z")
     o.append(S(brim, W, 4.8, F("M70 -392C112 -372 136 -340 134 -300L108 -300C100 -330 84 -352 60 -366Z", HA)
                + F("M-134 -312C-128 -300 -118 -298 -110 -306C-100 -330 -60 -356 2 -358L2 -350C-60 -348 -100 -322 -112 -298L-134 -298Z", HA)
                + stitches("M-118 -312C-112 -344 -60 -372 2 -372C64 -372 116 -344 120 -312")
@@ -797,7 +1041,7 @@ def ribbit():
     o.append(S("M-46 -186C-38 -194 -20 -192 -16 -180C-12 -168 -20 -158 -32 -157C-44 -156 -52 -174 -46 -186Z", W, 3.8,
                F("M-26 -196L-10 -196L-10 -152L-30 -152C-22 -162 -20 -180 -26 -196Z", DL)))
     o.append(C(-15, -184, 4.2, W, 2.6) + C(-12, -174, 4.2, W, 2.6) + C(-15, -164, 4.2, W, 2.6))
-    return "".join(o)
+    return o
 
 
 # =============================================================================
@@ -813,6 +1057,18 @@ def claw(open_=1.0):
             + S("M-14 2C-16 -10 -8 -18 0 -18C8 -18 16 -10 14 2Z", W, 3.8, F(rect(3, -22, 18, 4), DM)
                 + L("M-13 -4Q0 -1 13 -4", 1.8))
             + rivet(0, -9, 2.4))
+
+
+def claw_parts(open_=1.0):
+    """claw() split for the motion layer: the two fingers snip about their hinge (0, -14)"""
+    a = 14 * open_
+    fing = "M-4 -14C-12 -24 -12 -36 -6 -44C-3 -36 -1 -26 2 -18Z"
+    return [Part("lu-bolt-snip-l", [g(S(fing, W, 3.6, F(rect(-2, -48, 6, -10), DM)), f"rotate({n(-a)} 0 -14)")],
+                 pivot=(0, -14)),
+            Part("lu-bolt-snip-r", [g(S(mir(fing), W, 3.6, F(rect(2, -48, 10, -10), DM)), f"rotate({n(a)} 0 -14)")],
+                 pivot=(0, -14)),
+            S("M-14 2C-16 -10 -8 -18 0 -18C8 -18 16 -10 14 2Z", W, 3.8, F(rect(3, -22, 18, 4), DM)
+              + L("M-13 -4Q0 -1 13 -4", 1.8)) + rivet(0, -9, 2.4)]
 
 
 def robot_arm(pts):
@@ -833,12 +1089,19 @@ def bolt():
     o.append(grass(-120, 1, 0.9) + E(126, -3, 6, 4, W, 2.2))
 
     # waving arm (viewer right) and hanging arm (viewer left): behind the body
+    # the raised arm waves from the shoulder (it slides under the body box and joint), the claw
+    # flicks from the wrist and snips
+    bodyd = "M-58 -146C-60 -146 -62 -144 -62 -141L-64 -62L64 -62L62 -141C62 -144 60 -146 58 -146Z"
+    hd = "M-64 -258C-70 -258 -74 -254 -74 -248L-72 -180C-72 -175 -68 -172 -63 -172L63 -172C68 -172 72 -175 72 -180L74 -248C74 -254 70 -258 64 -258Z"
     wave = [(52, -118), (70, -128), (86, -146), (98, -166), (106, -188), (110, -208)]
-    o.append(robot_arm(wave))
-    o.append(g(S("M-10 -8L10 -8L11 6L-11 6Z", W, 3.4, F(rect(2, -10, 14, 8), DM)), "translate(110 -212) rotate(6)"))
-    o.append(g(claw(1.2), "translate(111 -220) rotate(8)"))
-    o.append(L("M140 -246Q150 -232 146 -214", 2.4) + L("M152 -258Q166 -238 160 -212", 2.2)
-             + L("M84 -252Q78 -240 80 -228", 2.2))
+    arm = [robot_arm(wave)]
+    arm.append(g(S("M-10 -8L10 -8L11 6L-11 6Z", W, 3.4, F(rect(2, -10, 14, 8), DM)), "translate(110 -212) rotate(6)"))
+    arm.append(Part("lu-bolt-claw", [Group("translate(111 -220) rotate(8)", claw_parts(1.2))], pivot=(111, -214)))
+    above = g(occ(hd, 5.2) + occ("M86 -232L74 -234L74 -190L86 -192Z", 4), "rotate(-5 0 -172)")
+    o.append(Part("lu-bolt-arm", arm, pivot=(56, -120),
+                  mask=(occ(bodyd, 5) + occ(circ(56, -120, 10), 3.4) + above, (20, -300, 190, -90))))
+    o.append(Part("lu-bolt-marks", [L("M140 -246Q150 -232 146 -214", 2.4) + L("M152 -258Q166 -238 160 -212", 2.2)
+                                    + L("M84 -252Q78 -240 80 -228", 2.2)], mask=(above, (60, -270, 180, -200))))
     hang = [(-52, -118), (-68, -116), (-82, -110), (-94, -100), (-102, -88)]
     o.append(robot_arm(hang))
     o.append(g(S("M-10 -8L10 -8L11 6L-11 6Z", W, 3.4, F(rect(2, -10, 14, 8), DM)), "translate(-105 -83) rotate(152)"))
@@ -854,7 +1117,6 @@ def bolt():
         o.append(S(circ(x, -31, 12), W, 3, F(circ(x + 3, -28, 10), DL)) + C(x, -31, 4, INK) + C(x - 1.2, -32.2, 1.2, W))
 
     # body box with chest hatch and heart sticker
-    bodyd = "M-58 -146C-60 -146 -62 -144 -62 -141L-64 -62L64 -62L62 -141C62 -144 60 -146 58 -146Z"
     o.append(S(bodyd, W, 5, F("M34 -150L70 -150L70 -58L40 -58Z", DM)
                + F("M-70 -80L70 -80L70 -58L-70 -58Z", HA)
                + "".join(rivet(x, -138, 2.4) for x in (-50, -30, 30, 50))
@@ -882,11 +1144,12 @@ def bolt():
     head.append(P("M-86 -232L-74 -234L-74 -190L-86 -192Z", DM, 4) + rivet(-80, -212, 2.6))
     head.append(P("M86 -232L74 -234L74 -190L86 -192Z", DM, 4) + rivet(80, -212, 2.6))
     head.append(P("M6 -258L22 -258L20 -268L8 -268Z", DM, 3))
-    head.append(L("M14 -268L12 -284L30 -296", 4.2))
-    head.append(S(circ(34, -298, 8.5), W, 3.6, F(circ(38, -295, 8), DM) + C(31, -301, 2.4)))
-    head.append(ray(34, -298, -160, 13, 21, 2.4) + ray(34, -298, -110, 13, 21, 2.4) + ray(34, -298, -60, 13, 20, 2.4)
-                + ray(34, -298, -10, 13, 19, 2.4))
-    hd = "M-64 -258C-70 -258 -74 -254 -74 -248L-72 -180C-72 -175 -68 -172 -63 -172L63 -172C68 -172 72 -175 72 -180L74 -248C74 -254 70 -258 64 -258Z"
+    head.append(Part("lu-bolt-ant", [  # the antenna springs from its socket, its glow rays pulse
+        L("M14 -268L12 -284L30 -296", 4.2),
+        S(circ(34, -298, 8.5), W, 3.6, F(circ(38, -295, 8), DM) + C(31, -301, 2.4)),
+        Part("lu-bolt-rays", [ray(34, -298, -160, 13, 21, 2.4) + ray(34, -298, -110, 13, 21, 2.4)
+                              + ray(34, -298, -60, 13, 20, 2.4) + ray(34, -298, -10, 13, 19, 2.4)],
+             pivot=(34, -298))], pivot=(14, -268)))
     head.append(S(hd, W, 5.2,
                   F("M48 -262L80 -262L80 -168L52 -168Z", DM)
                   + F("M-80 -190C-30 -186 30 -186 80 -190L80 -168L-80 -168Z", HA)
@@ -900,14 +1163,16 @@ def bolt():
     head.append("".join(C(lx + 25.5 * math.cos(math.radians(a)), ly + 25.5 * math.sin(math.radians(a)), 1.9, INK)
                         for a in range(0, 360, 45)))
     head.append(C(lx, ly, 21, DM, 3.2))
-    head.append(C(lx, ly, 15, INK))
-    head.append(C(lx - 6, ly - 6, 5.4, W) + C(lx + 6, ly + 6, 2.3, W) + C(lx - 2, ly - 10, 1.5, W))
-    head.append(C(38, -226, 13, W, 4.2) + C(38, -226, 7.4, INK) + C(35.4, -228.6, 2.4, W))
+    head.append(Part(None, [Part("lu-bolt-glance", [Part("lu-bolt-iris", [  # lens iris looks and pulses
+        C(lx, ly, 15, INK), C(lx - 6, ly - 6, 5.4, W) + C(lx + 6, ly + 6, 2.3, W) + C(lx - 2, ly - 10, 1.5, W)],
+        pivot=(lx, ly))])], look=4))
+    head.append(Part("lu-bolt-blink", [C(38, -226, 13, W, 4.2), Part(None, [Part("lu-bolt-glance", [
+        C(38, -226, 7.4, INK) + C(35.4, -228.6, 2.4, W)])], look=3)], pivot=(38, -226)))
     head.append(E(56, -200, 6.4, 3.6, DL))
     grille = "M16 -200Q34 -190 52 -200L52 -191Q34 -178 16 -191Z"
     head.append(S(grille, W, 3, "".join(L(f"M{x} -206L{x} -176", 1.7) for x in range(20, 52, 5))))
-    o.append(g("".join(head), "rotate(-5 0 -172)"))
-    return "".join(o)
+    o.append(Group("rotate(-5 0 -172)", head))
+    return o
 
 
 # =============================================================================
@@ -924,24 +1189,177 @@ DEFS = """<defs>
 </defs>"""
 
 
+# --- idle animation -----------------------------------------------------------
+# (class, duration s, delay s, easing, keyframes). Every track starts and ends at rest.
+EIO = "ease-in-out"
+SINE = "cubic-bezier(.45,0,.55,1)"
+# pendulum: per-keyframe easing so the swing never stalls at its zero crossings
+PEND_OUT, PEND_IO, PEND_IN = ("animation-timing-function:cubic-bezier(.33,.66,.66,1)",
+                              "animation-timing-function:cubic-bezier(.45,0,.55,1)",
+                              "animation-timing-function:cubic-bezier(.33,0,.66,.33)")
+
+
+def rot(*pairs):
+    return [(k, f"transform:rotate({v}deg)") for k, v in pairs]
+
+
+def pend(a, b):
+    """smooth swing 0 -> a -> b -> 0"""
+    return [("0%", f"transform:rotate(0deg);{PEND_OUT}"), ("25%", f"transform:rotate({a}deg);{PEND_IO}"),
+            ("75%", f"transform:rotate({b}deg);{PEND_IN}"), ("100%", "transform:rotate(0deg)")]
+
+
+def blink(at, closed=0.08):
+    """open, quick close, ~120 ms shut, open; at = (start, shut, open, end) in %"""
+    s0, s1, s2, s3 = at
+    return [(f"0%,{s0}%,{s3}%,100%", "transform:scaleY(1)"), (f"{s1}%,{s2}%", f"transform:scaleY({closed})")]
+
+
+def glance(*steps):
+    return [(k, f"transform:translate({x}px,{y}px)") for k, x, y in steps]
+
+
+def drift(dx, dy):
+    return [("0%,100%", "transform:translate(0px,0px)"), ("50%", f"transform:translate({dx}px,{dy}px)")]
+
+
+def fade(keep, out, back):
+    """visible from 0 to keep%, gone from out% until back%, visible again by 100%"""
+    return [(f"0%,{keep}%,100%", "opacity:1"), (f"{out}%,{back}%", "opacity:0")]
+
+
+ANIM = [
+    # Juniper: blinks, glances, sweeps the spyglass, braids sway, the map flutters
+    ("lu-jun-blink", 4.7, -1.3, EIO, blink((91, 93.5, 96, 99))),
+    ("lu-jun-glance", 7.3, -2.1, SINE, glance(("0%,28%,100%", 0, 0), ("33%,52%", 1.6, -1), ("58%,70%", 0, 0),
+                                              ("76%,90%", -1.5, .6))),
+    ("lu-jun-spy", 9.1, -3.4, SINE, rot(("0%,8%,100%", 0), ("30%,46%", -4.5), ("70%,80%", 2.5), ("92%", 0))),
+    ("lu-jun-twinkle", 4.3, -0.8, EIO, [("0%,70%,100%", "transform:scale(1)"), ("78%", "transform:scale(1.4)"),
+                                        ("87%", "transform:scale(.7)"), ("94%", "transform:scale(1.05)")]),
+    ("lu-jun-braid-l", 5.3, -1.7, None, pend(3, -3)),
+    ("lu-jun-braid-r", 5.9, -4.2, None, pend(-2.6, 2.6)),
+    ("lu-jun-arm", 6.7, -2.6, EIO, rot(("0%,100%", 0), ("50%", 1.4))),
+    ("lu-jun-map", 7.9, -5.5, EIO, rot(("0%,62%,100%", 0), ("66%", 3), ("70%", -2), ("74%", 2), ("78%", -1),
+                                        ("83%", .4), ("88%", 0))),
+    # Moss: slow blink, gentle glances, breathing arms, the head leaf catches a gust, snail stalks
+    ("lu-moss-blink", 6.3, -4.4, EIO, blink((90, 92.5, 94.5, 98.5))),
+    ("lu-moss-glance", 8.9, -6.1, SINE, glance(("0%,30%,100%", 0, 0), ("36%,54%", -2.4, .6), ("60%,66%", 0, 0),
+                                               ("72%,86%", 2.2, -.4), ("92%", 0, 0))),
+    ("lu-moss-arm-l", 5.9, -1.1, EIO, rot(("0%,100%", 0), ("42%,52%", 2.2))),
+    ("lu-moss-arm-r", 5.9, -1.1, EIO, rot(("0%,100%", 0), ("42%,52%", -2.2))),
+    ("lu-moss-stem", 7.7, -2.9, EIO, rot(("0%,46%,100%", 0), ("58%", -3.2), ("68%", 2), ("77%", -1), ("86%", .4),
+                                         ("94%", 0))),
+    ("lu-moss-leaf", 7.7, -2.6, EIO, rot(("0%,46%,100%", 0), ("57%", 5), ("66%", -6), ("75%", 3.5), ("84%", -1.5),
+                                         ("92%", .5), ("97%", 0))),
+    ("lu-moss-snail", 8.3, -0.4, EIO, [("0%,40%,74%,94%,100%", "transform:rotate(0deg) scale(1,1)"),
+                                       ("46%,62%", "transform:rotate(0deg) scale(.95,.3)"),
+                                       ("69%", "transform:rotate(0deg) scale(1,1.08)"),
+                                       ("78%", "transform:rotate(-12deg) scale(1,1)"),
+                                       ("82%", "transform:rotate(9deg) scale(1,1)"),
+                                       ("86%", "transform:rotate(-6deg) scale(1,1)"),
+                                       ("90%", "transform:rotate(3deg) scale(1,1)")]),
+    # Nib: floats (bob + tilt), waves, blinks, looks; droplets drift; shadow and lines breathe with the bob
+    ("lu-nib-bob", 4.3, -1.9, EIO, [("0%,100%", "transform:translate(0px,0px)"), ("50%", "transform:translate(0px,-7px)")]),
+    ("lu-nib-tilt", 6.1, -0.6, None, pend(-3, 3)),
+    ("lu-nib-shadow", 4.3, -1.9, EIO, [("0%,100%", "transform:scale(1,1)"), ("50%", "transform:scale(.84,.8)")]),
+    ("lu-nib-lines", 4.3, -1.9, EIO, [("0%,100%", "transform:translate(0px,0px) scale(1,1);opacity:1"),
+                                      ("50%", "transform:translate(0px,-4px) scale(.8,1);opacity:.55")]),
+    ("lu-nib-tuft", 4.3, -1.5, None, pend(3, -3)),
+    ("lu-nib-arm", 4.3, -1.6, EIO, rot(("0%,100%", 0), ("50%", -10))),
+    ("lu-nib-wave", 5.1, -3.3, EIO, rot(("0%,32%,100%", 0), ("5%", -18), ("11%", 10), ("17%", -18), ("23%", 8),
+                                        ("28%", -4))),
+    ("lu-nib-marks", 5.1, -3.3, EIO, fade(34, 44, 94)),
+    ("lu-nib-blink", 3.7, -0.9, EIO, blink((88, 91, 94, 98))),
+    ("lu-nib-glance", 5.3, -2.2, SINE, glance(("0%,24%,100%", 0, 0), ("30%,48%", 3, -1), ("54%,64%", 0, 0),
+                                              ("70%,86%", -3, 1.5), ("92%", 0, 0))),
+    ("lu-nib-specks", 7.1, -3.0, EIO, drift(1.5, -3)),
+] + [(f"lu-nib-d{i + 1}", d, dl, EIO, drift(dx, dy)) for i, (d, dl, dx, dy) in enumerate(
+    ((3.9, -0.5, -2, -5), (4.7, -2.9, 2, -6), (5.3, -1.2, -2.5, 4), (4.1, -3.6, 3, 4),
+     (6.1, -4.4, -1.5, -5), (5.7, -0.9, 2, -4), (4.5, -2.2, 3.5, -2), (6.7, -5.1, -1, 5)))] + [
+    # Captain Ribbit: droopy blink, slow looks, rod tip twitch, line sways, bobber bobs, fish wiggles
+    ("lu-rib-lid", 6.9, -2.7, EIO, [("0%,84%,99%,100%", "transform:translate(0px,0px)"),
+                                    ("89%,92.5%", "transform:translate(0px,12px)")]),
+    ("lu-rib-glance", 8.3, -5.1, SINE, glance(("0%,34%,100%", 0, 0), ("40%,58%", 2.4, .8), ("64%,70%", 0, 0),
+                                              ("76%,88%", -2.2, 1), ("94%", 0, 0))),
+    ("lu-rib-rod", 7.9, -1.4, EIO, rot(("0%,58%,100%", 0), ("61%", -3), ("65%", 1.6), ("69%", -.8), ("73%", .3),
+                                       ("77%", 0))),
+    # the fish hangs right of the rod: big swings away from it, small ones towards it, so
+    # line + fish together never carry the tail over the rod (about 10 units of room)
+    ("lu-rib-line", 7.9, -1.4, EIO, rot(("0%,60%,100%", 0), ("63%", -6), ("67%", 2.5), ("72%", -4), ("78%", 2),
+                                        ("84%", -1.5), ("90%", .5), ("95%", 0))),
+    ("lu-rib-bobber", 3.3, -0.7, EIO, [("0%,75%,100%", "transform:translate(0px,0px)"),
+                                       ("35%", "transform:translate(0px,3px)"), ("55%", "transform:translate(0px,-1px)")]),
+    ("lu-rib-fish", 4.6, -3.9, EIO, rot(("0%,26%,100%", 0), ("4%", 4.5), ("8%", -9), ("12%", 4), ("16%", -6),
+                                        ("21%", 2))),
+    ("lu-rib-tail", 4.6, -3.9, EIO, rot(("0%,28%,100%", 0), ("3%", -16), ("6%", 14), ("10%", -14), ("14%", 12),
+                                        ("18%", -8), ("23%", 4))),
+    ("lu-rib-splash", 4.6, -3.9, EIO, fade(24, 34, 88)),
+    ("lu-rib-drip", 4.6, -3.9, EIO, [("0%,18%,100%", "transform:translate(0px,0px);opacity:1"),
+                                     ("32%", "transform:translate(0px,16px);opacity:0"),
+                                     ("33%,88%", "transform:translate(0px,0px);opacity:0")]),
+    # Bolt: waves and snips, antenna springs, lens iris looks and pulses, small eye blinks
+    ("lu-bolt-arm", 5.9, -2.3, EIO, rot(("0%,34%,100%", 0), ("6%", -4), ("13%", 5), ("20%", -4), ("27%", 3))),
+    ("lu-bolt-claw", 5.9, -2.3, EIO, rot(("0%,34%,100%", 0), ("4%", 16), ("10%", -18), ("16%", 16), ("22%", -14),
+                                         ("28%", 6))),
+    ("lu-bolt-snip-l", 5.9, -2.3, EIO, rot(("0%,36%,100%", 0), ("39%", 12), ("42%", 0), ("45%", 12), ("49%", 0))),
+    ("lu-bolt-snip-r", 5.9, -2.3, EIO, rot(("0%,36%,100%", 0), ("39%", -12), ("42%", 0), ("45%", -12), ("49%", 0))),
+    ("lu-bolt-marks", 5.9, -2.3, EIO, fade(36, 46, 92)),
+    ("lu-bolt-ant", 4.1, -1.2, EIO, rot(("0%,62%,100%", 0), ("66%", -10), ("71%", 8), ("76%", -5), ("81%", 3),
+                                        ("86%", -1), ("91%", 0))),
+    ("lu-bolt-rays", 4.1, -1.2, EIO, [("0%,64%,100%", "transform:scale(1)"), ("70%", "transform:scale(1.3)"),
+                                      ("78%", "transform:scale(.85)"), ("86%", "transform:scale(1.08)"),
+                                      ("92%", "transform:scale(1)")]),
+    ("lu-bolt-iris", 4.9, -3.6, EIO, [("0%,55%,100%", "transform:scale(1)"), ("62%,74%", "transform:scale(.72)"),
+                                      ("84%", "transform:scale(1.06)"), ("90%", "transform:scale(1)")]),
+    ("lu-bolt-blink", 5.5, -0.3, EIO, blink((90, 92.5, 94.5, 98))),
+    ("lu-bolt-glance", 6.7, -4.8, SINE, glance(("0%,26%,100%", 0, 0), ("32%,50%", -2.6, -.8), ("56%,64%", 0, 0),
+                                               ("70%,86%", 2.4, .8), ("92%", 0, 0))),
+]
+
+
+def style():
+    rules, names = [], []
+    for cls, dur, delay, ease, frames in ANIM:
+        names.append(f".{cls}")
+        timing = f" {ease}" if ease else ""
+        rules.append(f".{cls}{{animation:{cls} {dur}s{timing} {delay}s infinite;transform-origin:0 0}}")
+        rules.append(f"@keyframes {cls}{{" + "".join(f"{k}{{{v}}}" for k, v in frames) + "}")
+    rules.append("@media (prefers-reduced-motion: reduce){" + ",".join(names) + "{animation:none!important}}")
+    return "<style>\n" + "\n".join(rules) + "\n</style>"
+
+
+MOTION_DEFS = DEFS.replace('<filter id="ink" x="-3%" y="-3%" width="106%" height="106%">',
+                           '<filter id="ink" x="-30%" y="-30%" width="160%" height="160%">')
+assert MOTION_DEFS != DEFS
+
+
 def main():
     groups = [
         ("juniper", juniper(), f"translate(215 {GROUND})"),
         ("moss", moss(), f"translate(570 {GROUND})"),
-        ("nib-shadow", E(0, 2, 44, 5.5, DL) + ground_marks(-44, 44, 51), f"translate(862 {GROUND})"),
+        ("nib-shadow", [Part("lu-nib-shadow", [E(0, 2, 44, 5.5, DL)], pivot=(0, 2)), ground_marks(-44, 44, 51)],
+         f"translate(862 {GROUND})"),
         ("nib", nib(), "translate(862 440)"),
         ("captain-ribbit", ribbit(), f"translate(1080 {GROUND})"),
         ("bolt", bolt(), f"translate(1360 {GROUND})"),
     ]
-    body = "".join(f'<!-- {name} --><g id="{name}" transform="{tr}">{content}</g>' for name, content, tr in groups)
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 700" width="1600" height="700" role="img">'
-           '<title>Storyfolk character line-up: Juniper with her spyglass, Moss the forest giant, Nib the ink '
-           'sprite, Captain Ribbit with his fishing rod, and Bolt the tin robot</title>'
-           + DEFS
-           + '<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">' + body + "</g></svg>")
-    with open(OUT, "w") as fh:
-        fh.write(svg)
-    print(f"wrote {os.path.normpath(OUT)} ({len(svg) / 1024:.0f} KB)")
+    head = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 700" width="1600" height="700" role="img">'
+            '<title>Storyfolk character line-up: Juniper with her spyglass, Moss the forest giant, Nib the ink '
+            'sprite, Captain Ribbit with his fishing rod, and Bolt the tin robot</title>' + DEFS
+            + '<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">')
+    still = head + "".join(f'<!-- {name} --><g id="{name}" transform="{tr}">{r_still(nodes)}</g>'
+                           for name, nodes, tr in groups) + "</g></svg>"
+    base = head + "".join(f'<!-- {name} --><g id="{name}" transform="{tr}">{r_base(nodes)}</g>'
+                          for name, nodes, tr in groups) + "</g></svg>"
+    mo = Motion()
+    parts = "".join(f"<!-- {name} -->" + mo.render(nodes, tr, parse_tr(tr)) for name, nodes, tr in groups)
+    motion = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 700" width="1600" height="700" '
+              'aria-hidden="true">\n' + MOTION_DEFS[:-len("</defs>")] + "\n".join(mo.defs) + "\n</defs>\n"
+              + style() + '\n<g stroke-linecap="round" stroke-linejoin="round">' + parts + "</g></svg>\n")
+    for path, svg in ((OUT, still), (OUT_BASE, base), (OUT_MOTION, motion)):
+        with open(path, "w") as fh:
+            fh.write(svg)
+        print(f"wrote {os.path.normpath(path)} ({len(svg) / 1024:.0f} KB)")
 
 
 main()

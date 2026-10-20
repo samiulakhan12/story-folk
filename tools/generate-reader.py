@@ -6,6 +6,10 @@ peeks out of its pages, a mug of cocoa steams beside her, and a paper boat and a
 candle sit at the foot of the stack.  Path data is hand-written; Python only assembles
 groups, clips, mirrored parts and repeated texture marks.
 Standard library only:  python3 tools/generate-reader.py
+
+One run writes three files: reader.svg (the complete still), reader-base.svg (the still
+minus every moving part) and reader-motion.svg (only the moving parts, with their idle
+animation in an internal <style>; laid over the base it reproduces the still at rest).
 """
 import math
 import os
@@ -14,6 +18,8 @@ import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "assets", "reader.svg")
+OUT_BASE = os.path.join(HERE, "..", "assets", "reader-base.svg")
+OUT_MOTION = os.path.join(HERE, "..", "assets", "reader-motion.svg")
 
 INK = "#111"
 W = "#fff"
@@ -157,6 +163,11 @@ def stitches(d, sw=1.4):
 def g(content, tr=None, extra=""):
     t = f' transform="{tr}"' if tr else ""
     return f"<g{t}{' ' + extra if extra else ''}>{content}</g>"
+
+
+def mv(name, s):
+    """mark a moving part: kept in the still, cut from the base, rebuilt in the motion layer"""
+    return f"<!--mv:{name}-->{s}<!--/mv-->"
 
 
 def mir(d, ax):
@@ -319,16 +330,28 @@ def stack():
 # ---------------------------------------------------------------------------
 # MUG of cocoa on the top book, with steam
 # ---------------------------------------------------------------------------
+STEAM = (("M556 418C546 404 564 394 556 380C550 370 556 360 564 354", 9),
+         ("M574 416C584 400 568 390 578 374C584 364 580 352 572 344", 8),
+         ("M540 424C534 414 544 408 540 398", 6))
+MUG_HANDLE = "M590 438C612 434 618 470 592 474L592 464C604 462 604 446 590 448Z"
+MUG_BODY = "M538 428L594 428L592 484C592 494 540 494 540 484Z"
+
+
+STEAM_BOX = ((532, 340, 48, 94), (556, 330, 44, 100), (522, 384, 36, 52))  # filter regions round each wisp
+
+
+def wisp(d, w):
+    return L(d, w + 4.6) + L(d, w, W)
+
+
 def mug():
     o = []
     o.append(E(566, 492, 30, 6, DD))
-    for d, w in (("M556 418C546 404 564 394 556 380C550 370 556 360 564 354", 9),
-                 ("M574 416C584 400 568 390 578 374C584 364 580 352 572 344", 8),
-                 ("M540 424C534 414 544 408 540 398", 6)):
-        o.append(L(d, w + 4.6) + L(d, w, W))
-    handle = "M590 438C612 434 618 470 592 474L592 464C604 462 604 446 590 448Z"
+    for d, w in STEAM:
+        o.append(mv("steam", wisp(d, w)))
+    handle = MUG_HANDLE
     o.append(S(handle, W, 4, F("M596 430L620 430L620 478L596 478Z", DM)))
-    body = "M538 428L594 428L592 484C592 494 540 494 540 484Z"
+    body = MUG_BODY
     o.append(S(body, W, 4.8, F("M574 420L600 420L600 500L572 500C578 476 578 446 574 420Z", DM)
                + F("M534 450L600 450L600 466L534 466Z", DL) + L("M538 450L594 450M538 466L594 466", 2)
                + P("M558 460C552 452 560 446 566 452C572 446 580 452 574 460L566 468Z", W, 2)
@@ -355,10 +378,18 @@ def boat():
     return "".join(o)
 
 
+def candle_rays():
+    return "".join(ray(652, 652, a, 28, 44 if a % 56 else 38, 2.6) for a in range(-160, 30, 28))
+
+
+def candle_flame():
+    return (P("M652 626C662 640 666 652 660 664C656 670 648 670 644 664C638 652 642 640 652 626Z", W, 3.2)
+            + P("M652 646C656 652 657 657 655 661C654 663 650 663 649 661C647 657 648 652 652 646Z", INK, 0))
+
+
 def candle():
     o = []
-    for a in range(-160, 30, 28):
-        o.append(ray(652, 652, a, 28, 44 if a % 56 else 38, 2.6))
+    o.append(mv("candle-glow", candle_rays()))
     o.append(E(654, 770, 48, 6, DD))
     dish = "M606 760C606 748 702 748 702 760C702 772 606 772 606 760Z"
     o.append(S(dish, W, 4.4, F("M654 740L710 740L710 776L654 776Z", DM)))
@@ -369,29 +400,35 @@ def candle():
     o.append(P("M634 690C634 684 672 684 672 690C672 698 668 702 666 712C664 718 660 718 660 710"
                "C658 700 650 700 648 706C646 714 642 716 640 708C638 700 634 698 634 690Z", W, 3.6))
     o.append(L("M653 686L652 672", 2.6))
-    o.append(P("M652 626C662 640 666 652 660 664C656 670 648 670 644 664C638 652 642 640 652 626Z", W, 3.2))
-    o.append(P("M652 646C656 652 657 657 655 661C654 663 650 663 649 661C647 657 648 652 652 646Z", INK, 0))
+    o.append(mv("candle-flame", candle_flame()))
     return "".join(o)
 
 
 # ---------------------------------------------------------------------------
 # NIB — peeking out of the open book's gutter (local frame of Wren's lap)
 # ---------------------------------------------------------------------------
-def nib(cx, cy, s):
-    o = []
+def nib_parts():
+    """Nib in its own frame, in paint order: body, eye whites, pupils, catch-lights, face"""
     body = "M0 -58C8 -42 36 -22 36 4C36 26 20 40 0 40C-20 40 -36 26 -36 4C-36 -22 -8 -42 0 -58Z"
-    o.append(P(body, INK, 4.5))
-    o.append(T(-27, -2, -29, -24, -12, -38, 5.5, W) + C(-28, 7, 2.6, W))
     nibd = "M0 -88C5 -78 13 -68 13 -58C13 -51 8 -48 0 -47C-8 -48 -13 -51 -13 -58C-13 -68 -5 -78 0 -88Z"
-    o.append(S(nibd, W, 3.6, F("M0 -90L16 -90L16 -45L0 -45Z", DM) + L("M0 -84L0 -63", 2.2) + C(0, -61, 2.8, INK)
-               + L("M-12 -54Q0 -49 12 -54", 2.2)))
-    o.append(C(-14, -4, 13, W) + C(14, -4, 13, W))
-    o.append(C(-12.5, -8.5, 6.6, INK) + C(15.5, -8.5, 6.6, INK))
-    o.append(C(-14.8, -11.2, 2.5, W) + C(13.2, -11.2, 2.5, W) + C(-10.5, -6, 1, W) + C(17.5, -6, 1, W))
-    o.append(T(-23, -22, -15, -27, -7, -23, 2.6, W) + T(7, -23, 15, -27, 23, -22, 2.6, W))
-    o.append(P("M-7 12Q0 23 7 12Q0 15 -7 12Z", W, 0))
-    o.append(E(-25, 9, 5.5, 3.2, DL) + E(25, 9, 5.5, 3.2, DL))
-    return g("".join(o), f"translate({n(cx)} {n(cy)}) scale({s})")
+    return {
+        "body": (P(body, INK, 4.5) + T(-27, -2, -29, -24, -12, -38, 5.5, W) + C(-28, 7, 2.6, W)
+                 + S(nibd, W, 3.6, F("M0 -90L16 -90L16 -45L0 -45Z", DM) + L("M0 -84L0 -63", 2.2) + C(0, -61, 2.8, INK)
+                     + L("M-12 -54Q0 -49 12 -54", 2.2))),
+        "whites": C(-14, -4, 13, W) + C(14, -4, 13, W),
+        "pupils": C(-12.5, -8.5, 6.6, INK) + C(15.5, -8.5, 6.6, INK),
+        "shines": C(-14.8, -11.2, 2.5, W) + C(13.2, -11.2, 2.5, W) + C(-10.5, -6, 1, W) + C(17.5, -6, 1, W),
+        "face": (T(-23, -22, -15, -27, -7, -23, 2.6, W) + T(7, -23, 15, -27, 23, -22, 2.6, W)
+                 + P("M-7 12Q0 23 7 12Q0 15 -7 12Z", W, 0) + E(-25, 9, 5.5, 3.2, DL) + E(25, 9, 5.5, 3.2, DL)),
+    }
+
+
+NIB_AT = "translate(64 -100) scale(0.9)"
+
+
+def nib():
+    q = nib_parts()
+    return g(q["body"] + q["whites"] + q["pupils"] + q["shines"] + q["face"], NIB_AT)
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +441,50 @@ def cable(cx, y0, y1, w=8, sw=1.7):
         out += L(f"M{cx - w} {y + 11}Q{cx - 2} {y + 9} {cx + w} {y}", sw)
         out += L(f"M{cx - w} {y + 1}Q{cx - w + 3} {y + 4} {cx - 3} {y + 5}", 1.2)
     return out
+
+
+# Wren's moving bits (shared by the still and the motion layer) and the shapes that cover them
+WREN_AT = "translate(366 490) scale(1.07)"
+EAR_L = circ(-68, -212, 12)
+FACE = circ(0, -222, 66)
+LPAGE = "M0 -70Q-52 -88 -104 -78L-106 -30Q-54 -40 0 -20Z"
+RPAGE = mir(LPAGE, 0)
+GUTTER = "M0 -70L0 -20"
+BOOKMARK = "M-3 -22L7 -20L12 26L7 20L2 30Z"
+
+
+def paw(sx):
+    return f"M{sx * 114} -46C{sx * 120} -36 {sx * 114} -24 {sx * 104} -24C{sx * 96} -24 {sx * 92} -32 {sx * 96} -42Z"
+
+
+def quill():
+    """quill tucked behind her ear (local quill frame: base at 0,0)"""
+    vane = ("M0 -26C-10 -50 -18 -88 -17 -118L-10 -116L-16 -128C-15 -150 -9 -170 0 -184"
+            "C6 -170 12 -148 12 -122C12 -106 10 -98 9 -92L3 -90L8 -84C7 -60 4 -42 0 -26Z")
+    barbs = "".join(L(f"M0 {y}L-14 {y - 13}", 1.1) for y in range(-36, -170, -9))
+    barbs += "".join(L(f"M0 {y}L10 {y - 11}", 1.1) for y in range(-34, -170, -9))
+    q = S(vane, W, 3.6, F("M0 -190L16 -190L16 -20L0 -20Z", DL) + barbs)
+    q += L("M0 6L0 -184", 2.8)
+    q += P("M-4 4L4 4L2 20L0 24L-2 20Z", DD, 2.2) + L("M0 12L0 22", 1.2, W)
+    return g(q, "translate(-72 -214) rotate(-24)")
+
+
+def wren_eyes():
+    return E(-24, -205, 7.5, 9.5, INK) + E(30, -205, 7.5, 9.5, INK)
+
+
+def wren_shines():
+    return C(-26.5, -208.5, 2.8) + C(27.5, -208.5, 2.8) + C(-21.5, -201, 1.1) + C(32.5, -201, 1.1)
+
+
+def book_page(d, sgn):
+    txt = "".join(L(f"M{n(sgn * 14)} {n(-62 + i * 8 + 4)}Q{n(sgn * 50)} {n(-72 + i * 8)} {n(sgn * 90)} {n(-66 + i * 8 - 2)}",
+                    1.3, extra='stroke-dasharray="7 3 12 3"') for i in range(5))
+    return (S(d, W, 3.6, txt + F(f"M0 -80L{sgn * 26} -80L{sgn * 26} -14L0 -14Z", DL))
+            + L(f"M{sgn * 104} -74Q{sgn * 52} -86 0 -68", 1.2) + L(f"M{sgn * 106} -36Q{sgn * 54} -44 0 -24", 1.2))
+
+
+NIB_ARMS = ("M36 -96Q26 -94 22 -82", "M93 -98Q102 -94 102 -84")
 
 
 def wren():
@@ -437,15 +518,8 @@ def wren():
             curls += g(T(-10, 4, 0, -9, 10, 2, 2, W), f"translate({n(x)} {n(y)}) rotate({n(math.degrees(a) + 90)}) scale({n(sc)})")
     o.append(S(hair, INK, 5, curls))
 
-    # --- quill tucked behind her ear, sticking up out of the curls (local quill frame: base at 0,0)
-    vane = ("M0 -26C-10 -50 -18 -88 -17 -118L-10 -116L-16 -128C-15 -150 -9 -170 0 -184"
-            "C6 -170 12 -148 12 -122C12 -106 10 -98 9 -92L3 -90L8 -84C7 -60 4 -42 0 -26Z")
-    barbs = "".join(L(f"M0 {y}L-14 {y - 13}", 1.1) for y in range(-36, -170, -9))
-    barbs += "".join(L(f"M0 {y}L10 {y - 11}", 1.1) for y in range(-34, -170, -9))
-    q = S(vane, W, 3.6, F("M0 -190L16 -190L16 -20L0 -20Z", DL) + barbs)
-    q += L("M0 6L0 -184", 2.8)
-    q += P("M-4 4L4 4L2 20L0 24L-2 20Z", DD, 2.2) + L("M0 12L0 22", 1.2, W)
-    o.append(g(q, "translate(-72 -214) rotate(-24)"))
+    # --- quill tucked behind her ear, sticking up out of the curls
+    o.append(mv("quill", quill()))
     # --- knees and thighs in striped tights
     lthigh = "M-40 -40C-80 -46 -132 -44 -152 -20C-162 -4 -150 14 -126 14C-96 14 -60 6 -36 -2Z"
     for d, shade in ((lthigh, "M-170 4L-20 4L-20 20L-170 20Z"), (mir(lthigh, 0), "M20 -54L170 -54L170 20L20 20Z")):
@@ -499,9 +573,9 @@ def wren():
                + F("M22 -180L46 -180L46 -136L22 -136Z", DM)))
 
     # --- ears, face, curly fringe, glasses, features
-    o.append(S(circ(-68, -212, 12), W, 4, F(circ(-68, -212, 12), DL) + P(circ(-70, -215, 10), W, 0)) + L("M-64 -218Q-71 -212 -64 -206", 1.6))
+    o.append(S(EAR_L, W, 4, F(circ(-68, -212, 12), DL) + P(circ(-70, -215, 10), W, 0)) + L("M-64 -218Q-71 -212 -64 -206", 1.6))
     o.append(S(circ(68, -212, 12), W, 4, F(circ(68, -212, 12), DM)) + L("M64 -218Q71 -212 64 -206", 1.6))
-    o.append(S(circ(0, -222, 66), W, 5.2, F(circ(0, -222, 66), DL) + P(circ(-9, -231, 67), W, 0)))
+    o.append(S(FACE, W, 5.2, F(circ(0, -222, 66), DL) + P(circ(-9, -231, 67), W, 0)))
     fr = []
     for i in range(9):
         x = -64 + i * 16
@@ -513,8 +587,7 @@ def wren():
     o.append(P(fringe, INK, 4.4))
     o.append("".join(g(T(-7, 3, 0, -6, 7, 2, 1.8, W), f"translate({n(x + 2)} {n(y - 6)})") for x, y in fr[1::2]))
     # eyes looking down at Nib (down and to the right)
-    o.append(E(-24, -205, 7.5, 9.5, INK) + E(30, -205, 7.5, 9.5, INK))
-    o.append(C(-26.5, -208.5, 2.8) + C(27.5, -208.5, 2.8) + C(-21.5, -201, 1.1) + C(32.5, -201, 1.1))
+    o.append(mv("wren-eyes", wren_eyes() + wren_shines()))
     o.append(T(-40, -238, -28, -246, -16, -240, 2.6) + T(16, -240, 28, -246, 40, -238, 2.6))
     for gx in (-29, 29):
         o.append(C(gx, -212, 23, "none", 4.2))
@@ -531,21 +604,13 @@ def wren():
     cover = "M-112 -78Q-56 -94 0 -74Q56 -94 112 -78L116 -22Q58 -34 0 -14Q-58 -34 -116 -22Z"
     o.append(P(cover, DD, 4.6))
     o.append(L("M-110 -70Q-56 -84 0 -66M110 -70Q56 -84 0 -66", 1.4))
-    lpage = "M0 -70Q-52 -88 -104 -78L-106 -30Q-54 -40 0 -20Z"
-    rpage = mir(lpage, 0)
-
-    def page(d, sgn):
-        txt = "".join(L(f"M{n(sgn * 14)} {n(-62 + i * 8 + 4)}Q{n(sgn * 50)} {n(-72 + i * 8)} {n(sgn * 90)} {n(-66 + i * 8 - 2)}",
-                        1.3, extra='stroke-dasharray="7 3 12 3"') for i in range(5))
-        return (S(d, W, 3.6, txt + F(f"M0 -80L{sgn * 26} -80L{sgn * 26} -14L0 -14Z", DL))
-                + L(f"M{sgn * 104} -74Q{sgn * 52} -86 0 -68", 1.2) + L(f"M{sgn * 106} -36Q{sgn * 54} -44 0 -24", 1.2))
-    o.append(page(lpage, -1))
-    o.append(nib(64, -100, 0.9))
-    o.append(page(rpage, 1))
-    o.append(L("M0 -70L0 -20", 2.6))
-    o.append(P("M-3 -22L7 -20L12 26L7 20L2 30Z", DD, 2.6))
+    o.append(mv("left-page", book_page(LPAGE, -1)))
+    o.append(mv("nib", nib()))
+    o.append(book_page(RPAGE, 1))
+    o.append(L(GUTTER, 2.6))
+    o.append(P(BOOKMARK, DD, 2.6))
     # Nib's tiny ink hands on the page edge, and a few splashes
-    o.append(L("M36 -96Q26 -94 22 -82", 5.2) + C(22, -79, 6, INK) + L("M93 -98Q102 -94 102 -84", 5.2) + C(102, -80, 6, INK))
+    o.append(mv("nib-arm", L(NIB_ARMS[0], 5.2)) + C(22, -79, 6, INK) + mv("nib-arm", L(NIB_ARMS[1], 5.2)) + C(102, -80, 6, INK))
     for x, y, r, a in ((14, -138, 4, -30), (108, -132, 3.6, 40), (118, -104, 3, 80), (8, -112, 2.8, -60)):
         o.append(f'<path d="M0 {n(-2.3 * r)}C{n(0.45 * r)} {n(-1.5 * r)} {n(r)} {n(-0.8 * r)} {n(r)} 0A{n(r)} {n(r)} 0 1 1 {n(-r)} 0'
                  f'C{n(-r)} {n(-0.8 * r)} {n(-0.45 * r)} {n(-1.5 * r)} 0 {n(-2.3 * r)}Z" fill="{INK}" '
@@ -553,7 +618,7 @@ def wren():
     o.append(C(40, -64, 2.6, INK) + C(52, -58, 1.6, INK) + C(76, -66, 2, INK))
     # sweater-paw hands holding the book
     for sx in (-1, 1):
-        hand = (f"M{sx * 114} -46C{sx * 120} -36 {sx * 114} -24 {sx * 104} -24C{sx * 96} -24 {sx * 92} -32 {sx * 96} -42Z")
+        hand = paw(sx)
         o.append(P(hand, W, 3.8) + L(f"M{sx * 102} -42Q{sx * 106} -36 {sx * 102} -29", 1.6))
     return "".join(o)
 
@@ -573,22 +638,246 @@ DEFS = """<defs>
 
 
 
+# ---------------------------------------------------------------------------
+# MOTION LAYER — only the moving parts, each with its own small ink filter and its
+# animation in an internal <style>.  Every class and keyframe name starts with "rd-".
+# ---------------------------------------------------------------------------
+# the ink kit with a roomier filter region for the moving parts; thin stroked parts, whose strokes
+# reach well past their geometric bounding box, get their own filter with an explicit region instead
+_INK = DEFS[DEFS.index("<filter"):DEFS.index("</filter>") + len("</filter>")]
+INK_PRIMS = _INK[_INK.index(">") + 1:-len("</filter>")]
+MOTION_DEFS = DEFS.replace(_INK, _INK.replace('x="-3%" y="-3%" width="106%" height="106%"',
+                                              'x="-20%" y="-20%" width="140%" height="140%"'))
+_thin = []
+EASE = "cubic-bezier(.45,0,.55,1)"
+
+
+def n2(v):
+    s = f"{v:.2f}".rstrip("0").rstrip(".")
+    return "0" if s in ("", "-0") else s
+
+
+def ink(inner, box=None):
+    """ink filter on a group inside a moving part; box (x, y, w, h) gives a thin part its own filter region"""
+    if box is None:
+        return f'<g filter="url(#ink)">{inner}</g>'
+    fid = f"ink-t{len(_thin)}"
+    x, y, w, h = box
+    _thin.append(f'<filter id="{fid}" filterUnits="userSpaceOnUse" x="{n2(x)}" y="{n2(y)}" '
+                 f'width="{n2(w)}" height="{n2(h)}">{INK_PRIMS}</filter>')
+    return f'<g filter="url(#{fid})">{inner}</g>'
+
+
+def piv(cls, inner, x, y):
+    """animated wrapper turning about (x, y) of the root frame"""
+    return (f'<g transform="translate({n2(x)} {n2(y)})"><g class="{cls}">'
+            f'<g transform="translate({n2(-x)} {n2(-y)})">{inner}</g></g></g>')
+
+
+def look(r, cls, inner):
+    """pupils: the page moves .sf-look to follow the cursor; idle glances go on the inner group"""
+    return f'<g class="sf-look" data-look="{r}"><g class="{cls}">{inner}</g></g>'
+
+
+def wpt(x, y):
+    """Wren-frame point -> root frame"""
+    return 366 + 1.07 * x, 490 + 1.07 * y
+
+
+def npt(x, y):
+    """Nib-frame point -> root frame"""
+    return wpt(64 + 0.9 * x, -100 + 0.9 * y)
+
+
+def wr(s):
+    return g(s, WREN_AT)
+
+
+def cover_mask(mid, box, inner):
+    """luminance mask: everything visible except the inked silhouettes of the shapes that cover a part"""
+    x, y, w, h = box
+    return (f'<mask id="{mid}" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">'
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#fff"/>'
+            f'<g filter="url(#ink)" fill="#000" stroke="#000" stroke-linejoin="round" stroke-linecap="round">{inner}</g></mask>')
+
+
+def sil(d, sw):
+    return f'<path d="{d}" stroke-width="{sw}"/>'
+
+
+# --- keyframes --------------------------------------------------------------
+def kf(name, frames):
+    """frames: [(percent, declarations)] -> one-line @keyframes"""
+    return f"@keyframes {name} {{ " + " ".join(f"{n2(p)}% {{ {d} }}" for p, d in frames) + " }"
+
+
+def rot_kf(name, pts):
+    return kf(name, [(p, f"transform: rotate({n2(a)}deg)") for p, a in pts])
+
+
+def move_kf(name, pts):
+    return kf(name, [(p, f"transform: translate({n2(x)}px, {n2(y)}px)") for p, x, y in pts])
+
+
+BLINK = ((0, 1), (0.07, 0.08), (0.19, 0.08), (0.29, 1))
+
+
+def blink_kf(name, period, closes):
+    """closes: start times (s) of each blink; ~70 ms to close, 120 ms shut, ~100 ms to open"""
+    fr = [(0, "transform: scaleY(1)")]
+    for t in closes:
+        fr += [(100 * (t + dt) / period, f"transform: scaleY({v})") for dt, v in BLINK]
+    return kf(name, fr + [(100, "transform: scaleY(1)")])
+
+
+def shine_kf(name, period, closes):
+    """catch-lights go out while the eye is shut, so the closed eye reads as one clean line"""
+    fr = [(0, "opacity: 1")]
+    for t in closes:
+        fr += [(100 * (t + dt) / period, f"opacity: {v}") for dt, v in ((0, 1), (0.04, 0), (0.23, 0), (0.29, 1))]
+    return kf(name, fr + [(100, "opacity: 1")])
+
+
+def eased(points, step=1.0):
+    """dense samples of a piecewise sine-eased curve: points [(percent, value)] -> [(percent, value)]"""
+    out = [points[0]]
+    for (p0, v0), (p1, v1) in zip(points, points[1:]):
+        if v0 == v1:
+            out.append((p1, v1))
+            continue
+        k = max(2, int((p1 - p0) / step))
+        for j in range(1, k + 1):
+            u = j / k
+            out.append((p0 + (p1 - p0) * u, v0 + (v1 - v0) * (0.5 - 0.5 * math.cos(math.pi * u))))
+    return out
+
+
+def motion_style():
+    kfs, rules = [], []
+
+    def anim(cls, dur, delay, ease=EASE):
+        rules.append(f".{cls} {{ animation: {cls} {dur}s {ease} {delay}s infinite; transform-origin: 0 0 }}")
+
+    # cocoa steam: each wisp rises, swells and fades, then grows back up out of the mug into its drawn place
+    for i, (dur, delay, rise) in enumerate(((5.2, -0.6, 36), (6.4, -3.9, 42), (5.8, -2.2, 24))):
+        # it stays mostly opaque for the first half of the rise and regrows quickly, so the three wisps
+        # (on different cycles) are seldom all faint at once; per-segment timing keeps the rise from stalling
+        kfs.append(kf(f"rd-steam{i}", [
+            (0, "transform: translate(0px, 0px) scale(1); opacity: 1"),
+            (10, "transform: translate(0px, 0px) scale(1); opacity: 1; animation-timing-function: cubic-bezier(.5,0,.75,.75)"),
+            (28, f"transform: translate(0px, -{n2(0.45 * rise)}px) scale(1.07); opacity: 0.85; animation-timing-function: linear"),
+            (44, f"transform: translate(0px, -{rise}px) scale(1.16); opacity: 0"),
+            (44.5, "transform: translate(0px, 6px) scale(0.4); opacity: 0; animation-timing-function: linear"),
+            (54, "transform: translate(0px, 2px) scale(0.75); opacity: 0.7; animation-timing-function: cubic-bezier(.25,.25,.5,1)"),
+            (66, "transform: translate(0px, 0px) scale(1); opacity: 1"),
+            (100, "transform: translate(0px, 0px) scale(1); opacity: 1")]))
+        anim(f"rd-steam{i}", dur, delay)
+    # Wren: quill wiggle, blink, reading glances, the left-hand page lifting now and then
+    kfs.append(rot_kf("rd-quill", [(0, 0), (4, -3), (9, 2.4), (14, -1.6), (19, 0.9), (24, -0.4), (29, 0), (100, 0)]))
+    anim("rd-quill", 6.9, -4.6)
+    kfs.append(blink_kf("rd-wren-blink", 5.6, [3.05]))
+    kfs.append(shine_kf("rd-wren-shine", 5.6, [3.05]))
+    anim("rd-wren-blink", 5.6, -1.7)
+    anim("rd-wren-shine", 5.6, -1.7)
+    kfs.append(move_kf("rd-wren-glance", [(0, 0, 0), (5, -2.4, -0.4), (27, 2.4, -0.4), (31, -2.4, 0.4), (53, 2.4, 0.4),
+                                          (57, -2.4, 1.1), (79, 2.4, 1.1), (86, 0, 0), (100, 0, 0)]))
+    anim("rd-wren-glance", 9, -0.4)
+    kfs.append(kf("rd-page", [(p, f"transform: skewY({n2(a)}deg) scale({n2(b)}, 1)") for p, a, b in
+                              ((0, 0, 1), (4, 2.6, 0.985), (8, -0.7, 1), (12, 1.3, 0.993), (16, -0.3, 1), (20, 0, 1),
+                               (100, 0, 1))]))
+    anim("rd-page", 7.7, -5.9)
+    # Nib ducks behind the page until only its eyes show, then pops back up; its arms pivot on its fists
+    peek = eased([(0, 0), (28, 0), (40, 11), (56, 11), (61, -1), (65, 0), (100, 0)])
+    kfs.append(kf("rd-nib", [(p, f"transform: translate(0px, {n2(1.07 * d)}px)") for p, d in peek]))
+    for name, (vx, vy) in (("rd-arm-l", (14, -14)), ("rd-arm-r", (-9, -14))):
+        a0 = math.atan2(vy, vx)
+        kfs.append(rot_kf(name, [(p, math.degrees(math.atan2(vy + d, vx) - a0)) for p, d in peek]))
+    for cls in ("rd-nib", "rd-arm-l", "rd-arm-r"):
+        anim(cls, 8.8, -1.3, "linear")
+    kfs.append(blink_kf("rd-nib-blink", 3.9, [1.5]))
+    anim("rd-nib-blink", 3.9, -0.2)
+    kfs.append(move_kf("rd-nib-glance", [(0, 0, 0), (8, -3, 0.5), (34, -3, 0.5), (41, 0, 0), (60, 0, 0),
+                                         (66, 0.8, 3), (82, 0.8, 3), (88, 0, 0), (100, 0, 0)]))
+    anim("rd-nib-glance", 6.7, -2.8)
+    # candle
+    fl = [(0, 1, 1, 0), (8, 0.92, 1.1, -4), (16, 1.05, 0.93, 3), (25, 0.95, 1.07, -2), (33, 1.02, 0.97, 1.5),
+          (46, 0.94, 1.09, 3), (55, 1.03, 0.95, -2.5), (64, 1, 1.04, 0), (77, 0.93, 1.1, -3), (87, 1.04, 0.95, 2),
+          (100, 1, 1, 0)]
+    kfs.append(kf("rd-flame", [(p, f"transform: scale({n2(a)}, {n2(b)}) skewX({n2(c)}deg)") for p, a, b, c in fl]))
+    anim("rd-flame", 3.1, -1.1)
+    kfs.append(kf("rd-glow", [(0, "transform: scale(1); opacity: 1"), (20, "transform: scale(1.06); opacity: 0.55"),
+                              (38, "transform: scale(1); opacity: 1"), (55, "transform: scale(1.03); opacity: 0.75"),
+                              (70, "transform: scale(1); opacity: 1"), (100, "transform: scale(1); opacity: 1")]))
+    anim("rd-glow", 4.4, -0.9)
+    classes = [r.split(" ", 1)[0] for r in rules]
+    return ("<style>\n" + "\n".join(kfs) + "\n" + "\n".join(rules) + "\n"
+            + "@media (prefers-reduced-motion: reduce) { " + ", ".join(classes) + " { animation: none !important } }\n"
+            + "</style>")
+
+
+def motion():
+    defs = [MOTION_DEFS[:-len("</defs>")]]
+    # masks: the still shapes that lie over each moving part, so it slides under them
+    defs.append(cover_mask("rd-m-mug", (500, 260, 140, 240),
+                           sil(MUG_HANDLE, 4) + sil(MUG_BODY, 4.8) + sil(ell(566, 428, 28, 7.5), 4.4)))
+    defs.append(cover_mask("rd-m-quill", (180, 30, 260, 300), wr(sil(EAR_L, 4) + sil(FACE, 5.2))))
+    defs.append(cover_mask("rd-m-page", (220, 360, 260, 160),
+                           wr(sil(RPAGE, 3.6) + sil(GUTTER, 2.6) + sil(BOOKMARK, 2.6) + sil(paw(-1), 3.8))))
+    defs.append(cover_mask("rd-m-nib", (370, 250, 150, 200), wr(sil(RPAGE, 3.6))))
+    eyes = "".join(f'<circle cx="{x}" cy="-4" r="13" transform="{WREN_AT} {NIB_AT}"/>' for x in (-14, 14))
+    defs.append(f'<clipPath id="rd-c-nib-eyes">{eyes}</clipPath>')
+    o = []
+    # cocoa steam
+    o.append('<g mask="url(#rd-m-mug)">'
+             + "".join(piv(f"rd-steam{i}", ink(wisp(d, w), box), *(float(v) for v in re.match(r"M(\S+) (\S+?)C", d).groups()))
+                       for i, ((d, w), box) in enumerate(zip(STEAM, STEAM_BOX))) + "</g>")
+    # Wren
+    o.append('<g mask="url(#rd-m-quill)">' + piv("rd-quill", ink(wr(quill())), *wpt(-72, -214)) + "</g>")
+    o.append(piv("rd-wren-blink", look(3, "rd-wren-glance", ink(wr(wren_eyes()))
+                                       + '<g class="rd-wren-shine">' + ink(wr(wren_shines())) + "</g>"), *wpt(3, -205)))
+    o.append('<g mask="url(#rd-m-page)">' + piv("rd-page", ink(wr(book_page(LPAGE, -1))), *wpt(0, -45)) + "</g>")
+    q = nib_parts()
+
+    def nb(s):
+        return wr(g(s, NIB_AT))
+    # body, then the arms (which pivot on the fists gripping the page), then eyes and face: while Nib ducks,
+    # the arms swing across its cheeks and must pass behind them.  At rest the three layers don't overlap.
+    o.append('<g mask="url(#rd-m-nib)"><g class="rd-nib">' + ink(nb(q["body"])) + "</g></g>")
+    o.append(piv("rd-arm-l", ink(wr(L(NIB_ARMS[0], 5.2)), (380, 378, 34, 34)), *wpt(22, -82)))
+    o.append(piv("rd-arm-r", ink(wr(L(NIB_ARMS[1], 5.2)), (456, 376, 30, 34)), *wpt(102, -84)))
+    o.append('<g mask="url(#rd-m-nib)"><g class="rd-nib">'
+             + piv("rd-nib-blink", ink(nb(q["whites"])) + '<g clip-path="url(#rd-c-nib-eyes)">'
+                   + look(3.5, "rd-nib-glance", ink(nb(q["pupils"] + q["shines"]))) + "</g>", *npt(0, -4))
+             + ink(nb(q["face"])) + "</g></g>")
+    # candle
+    o.append(piv("rd-glow", ink(candle_rays()), 652, 652))
+    o.append(piv("rd-flame", ink(candle_flame()), 652, 668))
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" aria-hidden="true">'
+            + motion_style() + "".join(defs) + "".join(_thin) + "</defs>"
+            + f'<g stroke-linecap="round" stroke-linejoin="round">{"".join(o)}</g></svg>')
+
+
 def main():
     body = ("<!-- ground -->" + ground()
             + "<!-- stack -->" + stack()
             + "<!-- mug -->" + g(mug(), extra='id="mug"')
-            + "<!-- wren -->" + g(wren(), "translate(366 490) scale(1.07)", 'id="wren"')
+            + "<!-- wren -->" + g(wren(), WREN_AT, 'id="wren"')
             + "<!-- boat -->" + g(boat(), extra='id="boat"')
             + "<!-- candle -->" + g(candle(), extra='id="candle"'))
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" role="img">'
-           "<title>Wren sits cross-legged on a tall stack of three hardback books, reading an open book on her lap "
-           "while Nib the ink sprite peeks out of its pages; a mug of cocoa steams beside her, with a paper boat "
-           "and a little candle at the foot of the stack</title>"
-           + DEFS
-           + f'<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">{body}</g></svg>')
-    with open(OUT, "w") as f:
-        f.write(svg)
-    print(f"wrote {OUT} ({len(svg) // 1024} KB)")
+
+    def page(content):
+        return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" role="img">'
+                "<title>Wren sits cross-legged on a tall stack of three hardback books, reading an open book on her lap "
+                "while Nib the ink sprite peeks out of its pages; a mug of cocoa steams beside her, with a paper boat "
+                "and a little candle at the foot of the stack</title>"
+                + DEFS
+                + f'<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">{content}</g></svg>')
+    still = page(re.sub(r"<!--/?mv(:[\w-]+)?-->", "", body))
+    base = page(re.sub(r"<!--mv:[\w-]+-->.*?<!--/mv-->", "", body, flags=re.S))
+    for path, svg in ((OUT, still), (OUT_BASE, base), (OUT_MOTION, motion())):
+        with open(path, "w") as f:
+            f.write(svg)
+        print(f"wrote {os.path.normpath(path)} ({len(svg) // 1024} KB)")
 
 
 if __name__ == "__main__":

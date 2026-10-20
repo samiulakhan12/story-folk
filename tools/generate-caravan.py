@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Builds ../assets/caravan.svg ("the snail caravan") for the Storyfolk site.
+"""Builds the snail caravan for the Storyfolk site: three files in ../assets/ (relative to this script)
 
-Standard library only (math, os, random). Run:  python3 tools/generate-caravan.py
-The SVG is written to ../assets/caravan.svg relative to this script.
+  caravan.svg ......... the complete still: motion off, the no-JS fallback, and the reference
+  caravan-base.svg .... the still minus every moving part, filters kept; it never changes
+  caravan-motion.svg .. ONLY the moving parts (same viewBox, transparent), animated by an internal
+                        <style>; every class and @keyframes name starts with cv-
+At rest (animation: none) base + motion reproduce the still.
+
+Standard library only (math, os, re, bisect, random). Run from any directory:
+    python3 tools/generate-caravan.py
 
 Path data is hand-placed; Python only assembles groups, clip paths and the
 repeated marks (rivets, flicks, coil springs, rope twists, the shell spiral).
@@ -27,13 +33,35 @@ Composition plan (viewBox 0 0 1000 800, snail faces right, seen a little from th
   ladder .............. off the porch (548/566,494) down to y 684
   kettle .............. front deck x 580-652, y 438-492
   bunting ............. parasol tip (540,80) -> near eye stalk (786,232)
+
+Moving pieces are wrapped in <!--mv:name--> tags while the drawing is built: the still strips the
+tags (byte-identical to the pre-motion file), the base drops the tagged pieces, and the motion
+layer re-uses them. Motion layer (class: cycle):
+  smoke ............... cv-smoke0-8 (5.5-9 s): each puff drifts along one spine from behind Nib to the
+                        upper left, fading in behind its drawn spot and out ahead of it; cv-ring0-2 rings
+  Nib ................. cv-nibwave (5.2 s, three waves then a rest), cv-nibblink, cv-nibglance + sf-look,
+                        cv-nibdrop0-2 (the ink drops bob)
+  hanging pot ......... cv-pot (5.6 s pendulum from the hook), cv-potsteam
+  Pip ................. cv-lantern (4.6 s swing from the fist) with cv-glow, cv-scarf (the tail beyond
+                        SCARF_CUT flutters), cv-pipblink, cv-pipglance + sf-look
+  parasol ............. cv-parasol (7.4 s gusts about the pole's seam above the wheel), cv-fringe0/1
+  bunting ............. cv-bunting (locked to the parasol so the knot stays on the rib tip), cv-flag0-6
+  kettle .............. cv-steam, cv-puffling0/1
+  lifted front leg .... cv-step (6.6 s: the shin paws down and up from the knee), cv-dust0/1
+  head ................ cv-stalkr/l (6.4 s sway), cv-blink (double blink), cv-glance + sf-look,
+                        cv-headlamp (rays pulse)
 """
+import bisect
 import math
 import os
 import random
+import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "assets", "caravan.svg")
+ASSETS = os.path.join(HERE, "..", "assets")
+OUT = os.path.join(ASSETS, "caravan.svg")
+OUT_BASE = os.path.join(ASSETS, "caravan-base.svg")
+OUT_MOTION = os.path.join(ASSETS, "caravan-motion.svg")
 
 INK = "#111"
 W = "#fff"
@@ -46,6 +74,11 @@ _n = [0]
 def nid():
     _n[0] += 1
     return f"c{_n[0]}"
+
+
+def mark(name, s):
+    """tag a moving piece in the full drawing; the still strips the tags, the base drops the piece"""
+    return f"<!--mv:{name}-->{s}<!--/mv:{name}-->"
 
 
 def n(v):
@@ -379,24 +412,28 @@ def ground_front():
 # ---------------------------------------------------------------------------
 # SMOKE — round puffs drifting back (up-left) from the stovepipe
 # ---------------------------------------------------------------------------
+PUFFS = ((40, 44, 21, 1), (72, 32, 18, 9), (46, 74, 16, 10), (88, 62, 27, 2),     # old cloud drifting off
+         (126, 96, 18, 3), (128, 120, 12, 11), (150, 110, 15, 8),                  # middle cloud
+         (180, 140, 11, 4), (198, 161, 8, 5))                                      # fresh puffs
+SMOKE_BUBBLES = ((50, 98, 3, 1.8), (172, 100, 2.2, 1.5), (118, 128, 1.8, 1.4))      # x, y, r, stroke
+
+
 def smoke():
     o = []
-    puffs = ((40, 44, 21, 1), (72, 32, 18, 9), (46, 74, 16, 10), (88, 62, 27, 2),     # old cloud drifting off
-             (126, 96, 18, 3), (128, 120, 12, 11), (150, 110, 15, 8),                  # middle cloud
-             (180, 140, 11, 4), (198, 161, 8, 5))                                      # fresh puffs
-    for (x, y, r, s) in puffs:
+    for i, (x, y, r, s) in enumerate(PUFFS):
         d = fuzz(x, y, r, 9, 0.3, seed=s, bulge=0.42)
-        o.append(S(d, W, 3.4, F(circ(x + r * 0.45, y + r * 0.4, r * 0.95), DL) + P(circ(x - r * 0.2, y - r * 0.2, r * 0.95), W, 0)
-                   + L(f"M{n(x - r * 0.5)} {n(y - r * 0.1)}Q{n(x - r * 0.3)} {n(y - r * 0.55)} {n(x + r * 0.15)} {n(y - r * 0.55)}", 1.5)))
-    o.append(L("M15 80Q9 70 17 62", 1.8) + L("M122 52Q116 44 124 36", 1.6) + C(50, 98, 3, W, 1.8) + C(172, 100, 2.2, W, 1.5)
-             + C(118, 128, 1.8, W, 1.4))
+        o.append(mark(f"puff{i}", S(d, W, 3.4, F(circ(x + r * 0.45, y + r * 0.4, r * 0.95), DL) + P(circ(x - r * 0.2, y - r * 0.2, r * 0.95), W, 0)
+                 + L(f"M{n(x - r * 0.5)} {n(y - r * 0.1)}Q{n(x - r * 0.3)} {n(y - r * 0.55)} {n(x + r * 0.15)} {n(y - r * 0.55)}", 1.5))))
+    o.append(mark("curl0", L("M15 80Q9 70 17 62", 1.8)) + mark("curl1", L("M122 52Q116 44 124 36", 1.6)))
+    for i, (x, y, r, sw) in enumerate(SMOKE_BUBBLES):
+        o.append(mark(f"bub{i}", C(x, y, r, W, sw)))
     return "".join(o)
 
 
 # ---------------------------------------------------------------------------
 # LEGS
 # ---------------------------------------------------------------------------
-def leg(hip, knee, ankle, padc, far=False, lifted=False, rot=0):
+def leg(hip, knee, ankle, padc, far=False, lifted=False, rot=0, name=None):
     o = []
     body = DD if far else W
     shade = INK if far else DM
@@ -426,6 +463,7 @@ def leg(hip, knee, ankle, padc, far=False, lifted=False, rot=0):
     ln = math.hypot(dx, dy)
     nx, ny = -dy / ln, dx / ln
     inner = F(tube((knee[0] - nx * 8, knee[1] - ny * 8), (ankle[0] - nx * 6, ankle[1] - ny * 6), 11, 8), shade)
+    shin_at = len(o)
     o.append(S(sh, body, sw, inner))
     if not far:
         o.append(coil((knee[0] + dx * 0.2, knee[1] + dy * 0.2), (knee[0] + dx * 0.8, knee[1] + dy * 0.8), 6, 17, 2.4))
@@ -434,8 +472,12 @@ def leg(hip, knee, ankle, padc, far=False, lifted=False, rot=0):
                  W if not far else DL, DM if not far else DD, 3.6 if not far else 3.2))
     o.append(C(ankle[0], ankle[1], 10 if not far else 8.5, DL if not far else DM, 3))
     o.append(C(ankle[0] - 2, ankle[1] - 2, 2.2, W))
+    knee_j = joint(knee[0], knee[1], 18 if not far else 14, DL if not far else DM)
+    if name:  # the shin swings from the knee: shin plate, coil, pad and ankle move together
+        o[shin_at:] = [mark(f"{name}-shin", "".join(o[shin_at:]))]
+        knee_j = mark(f"{name}-knee", knee_j)
     # knee joint
-    o.append(joint(knee[0], knee[1], 18 if not far else 14, DL if not far else DM))
+    o.append(knee_j)
     return "".join(o)
 
 
@@ -445,16 +487,19 @@ def far_legs():
     return "".join(o)
 
 
+DUST = ((716, 708, 2.2), (732, 718, 1.6), (746, 706, 1.8), (724, 730, 1.3))   # falling from the lifted pad
+
+
 def near_legs():
     o = []
     o.append(leg((255, 574), (306, 650), (280, 716), (278, 731)))
     o.append(joint(255, 574, 24))
     # lifted front leg, mid-step
-    o.append(leg((612, 574), (692, 610), (720, 664), (727, 680), lifted=True, rot=-16))
+    o.append(leg((612, 574), (692, 610), (720, 664), (727, 680), lifted=True, rot=-16, name="front"))
     o.append(joint(615, 574, 24))
     # motion swooshes + dust falling from the lifted pad
-    o.append(T(744, 652, 760, 660, 772, 676, 1.8) + T(752, 640, 770, 648, 782, 662, 1.5))
-    o.append(C(716, 708, 2.2, INK) + C(732, 718, 1.6, INK) + C(746, 706, 1.8, INK) + C(724, 730, 1.3, INK))
+    o.append(mark("swoosh", T(744, 652, 760, 660, 772, 676, 1.8) + T(752, 640, 770, 648, 782, 662, 1.5)))
+    o.append("".join(mark(f"dust{i}", C(x, y, r, INK)) for i, (x, y, r) in enumerate(DUST)))
     return "".join(o)
 
 
@@ -746,10 +791,13 @@ def chimney():
 # ---------------------------------------------------------------------------
 # NIB — on the chimney rim, waving at Pip (local coords from the hero cast)
 # ---------------------------------------------------------------------------
+NIB_DROPS = ((-52, -40, 5, -40), (50, -60, 4.2, 35), (-44, -74, 3.2, -25))
+
+
 def nib():
     o = []
-    for (x, y, r, a) in ((-52, -40, 5, -40), (50, -60, 4.2, 35), (-44, -74, 3.2, -25)):
-        o.append(drop(x, y, r, a))
+    for i, (x, y, r, a) in enumerate(NIB_DROPS):
+        o.append(mark(f"nib-drop{i}", drop(x, y, r, a)))
     o.append(C(-62, -12, 2.4, INK) + C(60, -26, 2.4, INK))
     body = "M0 -58C8 -42 36 -22 36 4C36 26 20 40 0 40C-20 40 -36 26 -36 4C-36 -22 -8 -42 0 -58Z"
     o.append(P(body, INK, 4.5))
@@ -760,12 +808,11 @@ def nib():
                + L("M-12 -54Q0 -49 12 -54", 2.2)))
     # arms: left hand on the rim, right waving
     o.append(L("M-33 14Q-44 22 -46 34", 6.5) + C(-46, 37, 5.4, INK))
-    o.append(L("M33 6Q48 0 54 -16", 6.5) + C(55, -20, 5.4, INK))
-    o.append(L("M62 -34Q68 -28 66 -20M70 -40Q78 -30 74 -18", 2.4))
+    o.append(mark("nib-arm", L("M33 6Q48 0 54 -16", 6.5) + C(55, -20, 5.4, INK)
+                  + L("M62 -34Q68 -28 66 -20M70 -40Q78 -30 74 -18", 2.4)))
     # face, looking right toward Pip
-    o.append(C(-12, -2, 13, W) + C(16, -2, 13, W))
-    o.append(C(-7, 0.5, 6.6, INK) + C(21, 0.5, 6.6, INK))
-    o.append(C(-9.3, -2.2, 2.5, W) + C(18.7, -2.2, 2.5, W) + C(-5, 3, 1, W) + C(23, 3, 1, W))
+    o.append(mark("nib-eyes", C(-12, -2, 13, W) + C(16, -2, 13, W) + C(-7, 0.5, 6.6, INK) + C(21, 0.5, 6.6, INK)
+                  + C(-9.3, -2.2, 2.5, W) + C(18.7, -2.2, 2.5, W) + C(-5, 3, 1, W) + C(23, 3, 1, W)))
     o.append(T(-21, -21, -13, -26, -5, -22, 2.6, W) + T(9, -22, 17, -26, 25, -21, 2.6, W))
     o.append(P("M-4 16Q3 28 10 16Q3 19 -4 16Z", W, 0))
     o.append(E(-24, 13, 5.5, 3.2, DL) + E(27, 13, 5.5, 3.2, DL))
@@ -781,6 +828,7 @@ def pot():
     o.append(P("M212 340L150 334L150 341L212 348Z", DL, 3) + P("M208 372L170 341L178 339L210 362Z", DM, 2.6))
     o.append(rivet(204, 344, 1.8) + rivet(203, 366, 1.8))
     o.append(L("M152 341Q147 346 151 351", 2.6))
+    swing_at = len(o)
     for y in (353, 360):
         o.append(E(151, y, 2.4, 3.8, "none", 1.8))
     # bail handle + pot
@@ -790,8 +838,9 @@ def pot():
                + L("M128 388Q151 392 175 388", 1.6)))
     o.append(P("M122 372L180 372L180 380L122 380Z", DL, 3) + C(124, 380, 3, W, 2) + C(178, 380, 3, W, 2))
     o.append(P("M131 372C134 362 168 362 171 372Z", W, 2.8) + C(151, 362, 3, INK))
+    o[swing_at:] = [mark("pot-swing", "".join(o[swing_at:]))]   # chain, bail, pot and lid swing from the hook
     # soot drips + a curl of steam
-    o.append(L("M160 360Q154 352 160 346Q166 340 160 332", 1.6))
+    o.append(mark("pot-steam", L("M160 360Q154 352 160 346Q166 340 160 332", 1.6)))
     return "".join(o)
 
 
@@ -831,8 +880,8 @@ def kettle():
     # handle
     o.append(L("M596 459C594 438 634 438 632 459", 4) + L("M596 459C594 438 634 438 632 459", 1.4, W))
     # steam curls drifting back
-    o.append(L("M657 446Q652 436 660 430Q668 424 662 414", 2) + L("M668 440Q664 432 670 428", 1.6))
-    o.append(C(651, 404, 4, W, 1.8) + C(644, 393, 2.6, W, 1.6))
+    o.append(mark("k-steam", L("M657 446Q652 436 660 430Q668 424 662 414", 2) + L("M668 440Q664 432 670 428", 1.6)))
+    o.append(mark("k-bub0", C(651, 404, 4, W, 1.8)) + mark("k-bub1", C(644, 393, 2.6, W, 1.6)))
     return "".join(o)
 
 
@@ -864,21 +913,35 @@ def ladder():
     return "".join(o)
 
 
-def bunting():
-    o = []
-    a, c, b = (553, 92), (668, 240), (786, 233)
-    o.append(L(f"M{a[0]} {a[1]}Q{c[0]} {c[1]} {b[0]} {b[1]}", 2.2))
+BUNTING = ((553, 92), (668, 240), (786, 233))   # tied to the parasol rib tip, sagging, tied to the eye stalk
+
+
+def bunting_flags():
+    """(x, y, angle, fill) of each pennant: hung from the string, rotated to its slope"""
+    a, c, b = BUNTING
     fills = (W, DM, HA, W, DD, DL, W)
     k = len(fills)
+    out = []
     for i, fl in enumerate(fills):
         t = (i + 0.7) / (k + 0.4)
         x = (1 - t) ** 2 * a[0] + 2 * (1 - t) * t * c[0] + t * t * b[0]
         y = (1 - t) ** 2 * a[1] + 2 * (1 - t) * t * c[1] + t * t * b[1]
         tx = 2 * (1 - t) * (c[0] - a[0]) + 2 * t * (b[0] - c[0])
         ty = 2 * (1 - t) * (c[1] - a[1]) + 2 * t * (b[1] - c[1])
-        ang = math.degrees(math.atan2(ty, tx))
-        flag = "M-11 0L11 0L-3 26Z"
-        o.append(g(P(flag, fl, 2.6) + L("M-11 1.5L11 1.5", 1.2), f"translate({n(x)} {n(y)}) rotate({n(ang)})"))
+        out.append((x, y, math.degrees(math.atan2(ty, tx)), fl))
+    return out
+
+
+def flag_art(fl):
+    return P("M-11 0L11 0L-3 26Z", fl, 2.6) + L("M-11 1.5L11 1.5", 1.2)
+
+
+def bunting():
+    o = []
+    a, c, b = BUNTING
+    o.append(mark("b-string", L(f"M{a[0]} {a[1]}Q{c[0]} {c[1]} {b[0]} {b[1]}", 2.2)))
+    for i, (x, y, ang, fl) in enumerate(bunting_flags()):
+        o.append(mark(f"flag{i}", g(flag_art(fl), f"translate({n(x)} {n(y)}) rotate({n(ang)})")))
     return "".join(o)
 
 
@@ -911,6 +974,10 @@ def deck_rail():
 
 def parasol_pole():
     return P(tube((430, 190), (430, 84), 5, 5), DL, 2.4)
+
+
+FRINGE = ((330, 80, 327, 86), (344, 80, 341, 87), (392, 85, 389, 91), (455, 86, 452, 92), (512, 82, 509, 89),
+          (528, 80, 525, 86))
 
 
 def parasol():
@@ -948,7 +1015,7 @@ def parasol():
         o.append(C(x, y + 1, 2.6, INK))
     o.append(P("M426 22L434 22L432 16L428 16Z", DL, 2.4) + C(430, 14, 3.4, W, 2.4))
     # fringe under the hem flickers in the wind
-    o.append(L("M330 80L327 86M344 80L341 87M392 85L389 91M455 86L452 92M512 82L509 89M528 80L525 86", 1.5))
+    o.append(mark("fringe", L("".join(f"M{a} {b}L{c} {d}" for a, b, c, d in FRINGE), 1.5)))
     return "".join(o)
 
 
@@ -971,7 +1038,8 @@ def pip_body():
     # brass lantern hanging from the fist
     lx = -82
     rays = "".join(ray(lx, -26, a, 21, 29 + (a % 3) * 2, 2.8) for a in (95, 128, 160, 192, 222, 60, 28))
-    o.append(rays)
+    lantern_at = len(o)
+    o.append(mark("lantern-rays", rays))
     o.append(L(f"M{lx - 8} -45Q{lx - 8} -60 {lx} -61Q{lx + 8} -60 {lx + 8} -45", 2.6))
     o.append(S(f"M{lx - 11} -37L{lx + 11} -37L{lx + 7} -44Q{lx} -49 {lx - 7} -44Z", W, 3,
                F(f"M{lx} -50L{lx + 12} -50L{lx + 12} -36L{lx} -36Z", DM)))
@@ -985,10 +1053,11 @@ def pip_body():
     o.append(L(f"M{lx - 6} -33L{lx - 6} -15M{lx + 6} -33L{lx + 6} -15", 1.6))
     o.append(P(f"M{lx - 13} -15L{lx + 13} -15L{lx + 10} -9L{lx - 10} -9Z", DM, 2.8))
     o.append(T(lx - 8, -30, lx - 9, -24, lx - 8, -19, 1.6, W))
-    o.append(S("M-73 -73C-80 -78 -90 -75 -91 -66C-92 -57 -84 -53 -76 -55C-71 -59 -70 -67 -73 -73Z", W, 4,
-               F("M-82 -60C-86 -54 -78 -52 -74 -56L-72 -64Z", DL)))
-    o.append(P("M-77 -72C-78 -79 -86 -81 -88 -75C-86 -72 -81 -70 -77 -72Z", W, 3))
-    o.append(L("M-86 -66Q-82 -64 -78 -66M-87 -61Q-83 -59 -79 -61", 1.6))
+    o[lantern_at:] = [mark("lantern", "".join(o[lantern_at:]))]   # swings from the fist
+    o.append(mark("fist", S("M-73 -73C-80 -78 -90 -75 -91 -66C-92 -57 -84 -53 -76 -55C-71 -59 -70 -67 -73 -73Z", W, 4,
+                            F("M-82 -60C-86 -54 -78 -52 -74 -56L-72 -64Z", DL))
+                  + P("M-77 -72C-78 -79 -86 -81 -88 -75C-86 -72 -81 -70 -77 -72Z", W, 3)
+                  + L("M-86 -66Q-82 -64 -78 -66M-87 -61Q-83 -59 -79 -61", 1.6)))
 
     # legs and big lace-up boots, planted on the deck
     def leg(mirror=1):
@@ -1047,9 +1116,9 @@ def pip_body():
     tail = ("M-17 -62C-34 -72 -46 -84 -62 -88C-78 -92 -90 -88 -106 -98L-110 -84C-96 -76 -82 -80 -66 -74"
             "C-50 -68 -40 -56 -26 -48Z")
     bands = "".join(F(f"M{x} -104L{x + 12} -104L{x + 9} -40L{x - 3} -40Z", DD) for x in (-44, -70, -96))
-    o.append(S(tail, W, 4, bands + L("M-30 -58C-42 -66 -52 -76 -66 -80", 1.6) + L("M-78 -84Q-90 -84 -100 -90", 1.6)))
-    o.append(L("M-108 -96L-117 -101M-109 -91L-119 -93M-110 -86L-118 -85", 2))
-    o.append(T(-118, -112, -128, -114, -138, -108, 2.2) + T(-122, -78, -130, -76, -138, -80, 2))
+    o.append(mark("tail", S(tail, W, 4, bands + L("M-30 -58C-42 -66 -52 -76 -66 -80", 1.6) + L("M-78 -84Q-90 -84 -100 -90", 1.6))))
+    o.append(mark("tail-bits", L("M-108 -96L-117 -101M-109 -91L-119 -93M-110 -86L-118 -85", 2)
+                  + T(-118, -112, -128, -114, -138, -108, 2.2) + T(-122, -78, -130, -76, -138, -80, 2)))
     ftail = "M-25 -52C-29 -40 -29 -28 -29 -15L-14 -17C-14 -29 -12 -41 -10 -52Z"
     o.append(S(ftail, W, 4, F("M-34 -46L-5 -46L-5 -39L-34 -39Z", DD) + F("M-34 -33L-5 -33L-5 -26L-34 -26Z", DD)))
     o.append(L("M-27 -15L-28 -9M-23 -15.5L-23 -9.5M-19 -16L-18 -10", 2))
@@ -1064,8 +1133,8 @@ def pip_body():
     o.append(S(circ(0, -82, 29), W, 5,
                F(circ(0, -82, 29), DL) + P(circ(-7, -87, 30), W, 0)
                + F("M-34 -96C-12 -100 12 -100 34 -96L34 -85C12 -89 -12 -89 -34 -85Z", DM)))
-    o.append(E(-11 + fx, -74, 4.6, 6.2, INK) + E(11 + fx, -74, 4.6, 6.2, INK))
-    o.append(C(-12.6 + fx, -76.6, 1.9) + C(9.4 + fx, -76.6, 1.9) + C(-9.6 + fx, -71.6, 0.8) + C(12.4 + fx, -71.6, 0.8))
+    o.append(mark("pip-eyes", E(-11 + fx, -74, 4.6, 6.2, INK) + E(11 + fx, -74, 4.6, 6.2, INK)
+                  + C(-12.6 + fx, -76.6, 1.9) + C(9.4 + fx, -76.6, 1.9) + C(-9.6 + fx, -71.6, 0.8) + C(12.4 + fx, -71.6, 0.8)))
     o.append(T(-17 + fx, -83, -11 + fx, -87, -5 + fx, -84.5, 2.4) + T(5 + fx, -84.5, 11 + fx, -87, 17 + fx, -83, 2.4))
     o.append(L(f"M{-2.5 + fx} -67Q{fx} -64.5 {2.5 + fx} -67", 2))
     o.append(P(f"M{-8.5 + fx} -61Q{fx} -49 {8.5 + fx} -61Q{fx} -59 {-8.5 + fx} -61Z", INK, 0))
@@ -1165,7 +1234,7 @@ def stalk(base, ctrl, tip, w0, w1, seed):
     return S(d, W, 3.6, F(shade, DM) + "".join(inner))
 
 
-def eye(cx, cy, r, px, py):
+def eye(cx, cy, r, px, py, name):
     o = []
     # goggle ring
     ring = circ(cx, cy, r + 9) + circ(cx, cy, r + 1)
@@ -1174,31 +1243,37 @@ def eye(cx, cy, r, px, py):
     for i in range(6):
         a = math.radians(i * 60 + 30)
         o.append(C(cx + math.cos(a) * (r + 5), cy + math.sin(a) * (r + 5), 1.6, INK))
+    o = [mark(f"{name}-ring", "".join(o))]
     # eyeball
     inner = [F(circ(cx + r * 0.35, cy + r * 0.45, r * 0.9), DL), P(circ(cx - r * 0.15, cy - r * 0.2, r * 0.95), W, 0)]
     inner.append(E(px, py, r * 0.5, r * 0.58, INK))
     inner.append(C(px - r * 0.18, py - r * 0.22, r * 0.17, W) + C(px + r * 0.2, py + r * 0.2, r * 0.07, W))
     # happy lower lid
     inner.append(L(f"M{n(cx - r)} {n(cy + r * 0.62)}Q{n(cx)} {n(cy + r * 0.28)} {n(cx + r)} {n(cy + r * 0.62)}", 2.4))
-    o.append(S(circ(cx, cy, r), W, 3.6, "".join(inner)))
+    o.append(mark(f"{name}-ball", S(circ(cx, cy, r), W, 3.6, "".join(inner))))
     # glass glint across the goggle
-    o.append(L(f"M{n(cx - r * 0.75)} {n(cy - r * 0.3)}Q{n(cx - r * 0.6)} {n(cy - r * 0.7)} {n(cx - r * 0.25)} {n(cy - r * 0.8)}", 2.6, W))
-    return "".join(o)
+    o.append(mark(f"{name}-glint", L(f"M{n(cx - r * 0.75)} {n(cy - r * 0.3)}Q{n(cx - r * 0.6)} {n(cy - r * 0.7)} {n(cx - r * 0.25)} {n(cy - r * 0.8)}", 2.6, W)))
+    return mark(name, "".join(o))
 
 
 HEAD = ("M752 330C750 282 790 256 825 258C870 262 894 300 888 342C884 378 860 400 822 400"
         "C786 400 754 380 752 330Z")
+STALK_R = ((846, 272), (850, 238), (858, 200), 15, 12)     # base, bend, tip, widths (head-local coords)
+STALK_L = ((796, 276), (786, 244), (782, 212), 17, 13)
+EYE_R = (858, 180, 26, 865, 184)                         # centre, radius, pupil centre
+EYE_L = (780, 190, 29, 788, 195)
+LAMP = (897, 297)                                        # headlamp rays radiate from here
 
 
 def head():
     o = []
     # stalks behind the head
-    o.append(stalk((846, 272), (850, 238), (858, 200), 15, 12, 1))
-    o.append(stalk((796, 276), (786, 244), (782, 212), 17, 13, 2))
+    o.append(mark("stalk-r", stalk(*STALK_R, 1)))
+    o.append(mark("stalk-l", stalk(*STALK_L, 2)))
     # goggle strap linking the eyes
-    o.append(P("M806 176L834 168L836 182L808 190Z", DD, 2.4))
-    o.append(eye(858, 180, 26, 865, 184))
-    o.append(eye(780, 190, 29, 788, 195))
+    o.append(mark("strap", P("M806 176L834 168L836 182L808 190Z", DD, 2.4)))
+    o.append(eye(*EYE_R, "eye-r"))
+    o.append(eye(*EYE_L, "eye-l"))
     inner = []
     inner.append(F(circ(838, 345, 70), DM))
     inner.append(P(circ(810, 318, 66), DL, 0))
@@ -1220,8 +1295,8 @@ def head():
     o.append(P(ell(890, 297, 8.5, 21), W, 3.6) + P(ell(890, 297, 4.5, 14), DL, 1.8))
     o.append(T(887, 286, 886, 292, 887, 299, 1.6, W))
     o.append(rivet(864, 296, 1.8))
-    rays = "".join(ray(897, 297, a, 18, 30 + (abs(a) % 4) * 3, 2.4) for a in (-34, -17, 0, 17, 34))
-    o.append(rays)
+    rays = "".join(ray(*LAMP, a, 18, 30 + (abs(a) % 4) * 3, 2.4) for a in (-34, -17, 0, 17, 34))
+    o.append(mark("rays", rays))
     # face: wide happy smile, cheek
     o.append(P("M812 352Q846 392 878 344Q848 362 812 352Z", INK, 2.6))
     o.append(P("M830 366Q846 378 860 364Q846 368 830 366Z", DM, 0))
@@ -1252,42 +1327,783 @@ DEFS = """<defs>
 PIP_TR = "translate(385 190) scale(0.66)"
 PARASOL_TILT = "rotate(6 430 190)"
 NIB_TR = "translate(228 167) scale(0.56)"
+HEAD_TR = "translate(820 330) scale(1.08) translate(-820 -330)"
+TITLE = ("<title>The snail caravan: a riveted mechanical snail on four jointed legs, its spiral shell made into "
+         "a little house with a porthole, door and smoking stovepipe; Pip steers at a ship's wheel under a "
+         "patched parasol while Nib waves from the chimney</title>")
 
 
-def main():
+def drawing():
+    """the full drawing, with every moving piece wrapped in mark() tags"""
     parts = [
         ("ground", ground()),
         ("smoke", smoke()),
         ("far-legs", far_legs()),
         ("shell", shell() + porthole() + door()),
         ("chimney", chimney()),
-        ("nib", g(nib(), NIB_TR)),
+        ("nib", g(mark("nib", nib()), NIB_TR)),
         ("hanging-pot", pot()),
         ("roof-deck", deck()),
-        ("parasol-pole", g(parasol_pole(), PARASOL_TILT)),
+        ("parasol-pole", g(mark("pole", parasol_pole()), PARASOL_TILT)),
         ("pip", g(pip_body() + helm_post() + wheel() + pip_hand(), PIP_TR)),
         ("deck-rail", deck_rail()),
-        ("parasol", g(parasol(), PARASOL_TILT)),
+        ("parasol", g(mark("canopy", parasol()), PARASOL_TILT)),
         ("bunting", bunting()),
         ("hull", hull() + hull_pipe() + saddle() + porch()),
         ("crate", crate()),
         ("kettle", kettle()),
         ("ladder", ladder()),
         ("near-legs", near_legs()),
-        ("head", g(head(), "translate(820 330) scale(1.08) translate(-820 -330)")),
+        ("head", g(head(), HEAD_TR)),
         ("ground-tufts", ground_front()),
     ]
-    body = "".join(f"<!-- {name} --><g id=\"{name}\">{content}</g>" for name, content in parts)
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800" role="img">'
-           '<title>The snail caravan: a riveted mechanical snail on four jointed legs, its spiral shell made into '
-           'a little house with a porthole, door and smoking stovepipe; Pip steers at a ship\'s wheel under a '
-           'patched parasol while Nib waves from the chimney</title>'
-           + DEFS
-           + '<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)"><g filter="url(#halo)">'
-           + body + "</g></g></svg>")
-    with open(OUT, "w") as fh:
-        fh.write(svg)
-    print(f"wrote {os.path.normpath(OUT)} ({len(svg) / 1024:.0f} KB)")
+    return "".join(f"<!-- {name} --><g id=\"{name}\">{content}</g>" for name, content in parts)
 
 
-main()
+def page(body):
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800" role="img">'
+            + TITLE + DEFS
+            + '<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)"><g filter="url(#halo)">'
+            + body + "</g></g></svg>")
+
+
+def unmark(s):
+    return re.sub(r"<!--/?mv:[\w-]+-->", "", s)
+
+
+def piece(body, name):
+    m = re.search(rf"<!--mv:{name}-->(.*?)<!--/mv:{name}-->", body, re.S)
+    assert m, name
+    return m.group(1)
+
+
+def cut(body, *names, subs=None):
+    """drop the named marked pieces (or replace them via subs[name](content))"""
+    for name in names:
+        f = (subs or {}).get(name, lambda s: "")
+        body, k = re.subn(rf"<!--mv:{name}-->(.*?)<!--/mv:{name}-->", lambda m: f(m.group(1)), body, flags=re.S)
+        assert k == 1, name
+    return body
+
+
+# ---------------------------------------------------------------------------
+# GEOMETRY shared by the base and the motion layer
+# ---------------------------------------------------------------------------
+POLE_CUT = 149.5      # parasol-local y of the pole's seam above the wheel's top handle knob (top ~154.2):
+POLE_KNOB = 152.5     # below it the pole stays put; the swaying part overlaps down to here (its ink smear
+                      # reaches 1.3 further, still clear of the knob), so the seam never opens
+SCARF_CUT = -56       # Pip-local x: the scarf tail beyond this flutters, the root stays put
+DOME_GAP = 5.0        # stalks are hidden this far outside the dome's centre line (outline 2.5 + ink smear 1.3 + margin)
+
+
+def bez3(p0, c1, c2, p1, t):
+    a, b, c, d = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3
+    return (a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0], a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1])
+
+
+def cubic_path_pts(d, k=32):
+    """sample an absolute M/C/Z path as a polyline"""
+    v = [float(t) for t in re.findall(r"-?\d+\.?\d*", d)]
+    pts = [(v[0], v[1])]
+    for i in range(2, len(v) - 5, 6):
+        p0, c1, c2, p1 = pts[-1], (v[i], v[i + 1]), (v[i + 2], v[i + 3]), (v[i + 4], v[i + 5])
+        pts += [bez3(p0, c1, c2, p1, j / k) for j in range(1, k + 1)]
+    return pts
+
+
+def inside(p, poly):
+    x, y = p
+    c = False
+    for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            c = not c
+    return c
+
+
+DOME = cubic_path_pts(HEAD)[:-1]
+
+
+def stalk_pivot(st):
+    """where a stalk's centre line leaves the dome outline (head-local)"""
+    (b, c, t) = st[:3]
+    for i in range(401):
+        u = i / 400
+        p = ((1 - u) ** 2 * b[0] + 2 * (1 - u) * u * c[0] + u * u * t[0], (1 - u) ** 2 * b[1] + 2 * (1 - u) * u * c[1] + u * u * t[1])
+        if not inside(p, DOME):
+            return p
+    raise ValueError(st)
+
+
+def dome_offset(dist):
+    cx = sum(p[0] for p in DOME) / len(DOME)
+    cy = sum(p[1] for p in DOME) / len(DOME)
+    out = []
+    m = len(DOME)
+    for i, (x, y) in enumerate(DOME):
+        (ax, ay), (bx, by) = DOME[i - 1], DOME[(i + 1) % m]
+        tx, ty = bx - ax, by - ay
+        ln = math.hypot(tx, ty) or 1
+        nx, ny = ty / ln, -tx / ln
+        if (x - cx) * nx + (y - cy) * ny < 0:
+            nx, ny = -nx, -ny
+        out.append((x + nx * dist, y + ny * dist))
+    return out
+
+
+PIVOT_R = stalk_pivot(STALK_R)
+PIVOT_L = stalk_pivot(STALK_L)
+
+
+def base_svg(body):
+    k = [0]
+
+    def clip(d):
+        def f(s):
+            k[0] += 1
+            return f'<clipPath id="cvb{k[0]}"><path d="{d}"/></clipPath><g clip-path="url(#cvb{k[0]})">{s}</g>'
+        return f
+
+    moving = (["nib", "pot-swing", "pot-steam", "canopy", "lantern", "tail-bits", "pip-eyes", "k-steam", "k-bub0", "k-bub1",
+               "b-string", "front-shin", "swoosh", "strap", "eye-r", "eye-l", "rays", "curl0", "curl1"]
+              + [f"puff{i}" for i in range(len(PUFFS))] + [f"bub{i}" for i in range(len(SMOKE_BUBBLES))]
+              + [f"flag{i}" for i in range(len(bunting_flags()))] + [f"dust{i}" for i in range(len(DUST))])
+    body = cut(body, *moving)
+    # pieces that move only beyond a seam keep their fixed root here
+    body = cut(body, "pole", "tail", "stalk-r", "stalk-l", subs={
+        "pole": clip(f"M370 {POLE_CUT}L490 {POLE_CUT}L490 260L370 260Z"),
+        "tail": clip(f"M{SCARF_CUT} -200L200 -200L200 200L{SCARF_CUT} 200Z"),
+        # a stalk's root, in a thin band just outside the dome, fills the gap under the swaying stalk's clip
+        "stalk-r": lambda s: clip(circ(*PIVOT_R, 16))(clip(poly_d(dome_offset(DOME_GAP + 2)))(s)),
+        "stalk-l": lambda s: clip(circ(*PIVOT_L, 16))(clip(poly_d(dome_offset(DOME_GAP + 2)))(s)),
+    })
+    return page(unmark(body))
+
+
+# ---------------------------------------------------------------------------
+# MOTION LAYER  (caravan-motion.svg)
+# Every moving part sits in a pivot wrapper whose net transform at rest is the identity, so its
+# own ink filter sees the same user space (and the same noise) as the still. White backings for
+# all moving parts are painted first (like the still's halo, under everything), each clipped away
+# from fixed ink it borders, then the art in the still's paint order.
+# ---------------------------------------------------------------------------
+HALO = 3.8            # backing reach past the ink (the still's halo filter dilates 3.2 with a square)
+EASE = "cubic-bezier(.45,0,.55,1)"
+INK_FX = ('<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"/>'
+          '<feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>')
+TAG_RE = re.compile(r'<(/?)([A-Za-z]+)((?:\s+[\w:-]+="[^"]*")*)\s*(/?)>')
+ATTR_RE = re.compile(r'([\w:-]+)="([^"]*)"')
+
+
+def fm(v, d=2):
+    s = f"{v:.{d}f}".rstrip("0").rstrip(".")
+    return "0" if s in ("-0", "", "-") else s
+
+
+def tf_pip(x, y):
+    return 385 + 0.66 * x, 190 + 0.66 * y
+
+
+def tf_nib(x, y):
+    return 228 + 0.56 * x, 167 + 0.56 * y
+
+
+def tf_head(x, y):
+    return 820 + 1.08 * (x - 820), 330 + 1.08 * (y - 330)
+
+
+def tf_tilt(x, y):
+    a = math.radians(6)
+    return (430 + (x - 430) * math.cos(a) - (y - 190) * math.sin(a), 190 + (x - 430) * math.sin(a) + (y - 190) * math.cos(a))
+
+
+def Cw(x, y, r, fill):
+    return f'<circle cx="{fm(x)}" cy="{fm(y)}" r="{fm(r)}" fill="{fill}"/>'
+
+
+def Ew(x, y, rx, ry, fill):
+    return f'<ellipse cx="{fm(x)}" cy="{fm(y)}" rx="{fm(rx)}" ry="{fm(ry)}" fill="{fill}"/>'
+
+
+def circ_w(cx, cy, r):
+    return f"M{fm(cx - r)} {fm(cy)}A{fm(r)} {fm(r)} 0 1 0 {fm(cx + r)} {fm(cy)}A{fm(r)} {fm(r)} 0 1 0 {fm(cx - r)} {fm(cy)}Z"
+
+
+def poly_d(pts):
+    return "M" + "L".join(f"{fm(x, 1)} {fm(y, 1)}" for x, y in pts) + "Z"
+
+
+def outside(pts, box):
+    """clip path d for the box (x0, y0, x1, y1) minus the polygon (use with clip-rule evenodd). Keep the box
+    tight: a big non-rectangular clip is re-rasterised every frame and halves the frame rate."""
+    return rect_d(*box) + poly_d(pts)
+
+
+def rect_d(x0, y0, x1, y1):
+    return poly_d([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+
+
+def halo(svg, h):
+    """white backing for a piece: each shape filled and stroked white so it reaches h past its ink"""
+    out, stack, skip = [], [], 0
+    for m in TAG_RE.finditer(svg):
+        close, tag, attrs, selfc = m.groups()
+        a = dict(ATTR_RE.findall(attrs))
+        if tag == "clipPath":
+            skip += -1 if close else (0 if selfc else 1)
+            continue
+        if tag == "g":
+            if close:
+                if stack.pop() == "skip":
+                    skip -= 1
+                elif not skip:
+                    out.append("</g>")
+            elif "clip-path" in a:          # clipped detail lies inside the outline drawn after it
+                stack.append("skip")
+                skip += 1
+            else:
+                stack.append("keep")
+                if not skip:
+                    out.append(f'<g transform="{a["transform"]}">' if "transform" in a else "<g>")
+            continue
+        if skip or close or tag not in ("path", "circle", "ellipse"):
+            continue
+        stroked = a.get("stroke", "none") != "none"
+        sw = float(a.get("stroke-width", 0)) if stroked else 0.0
+        filled = a.get("fill", "#000") != "none"
+        if not (filled or stroked):
+            continue
+        geo = "".join(f' {k}="{a[k]}"' for k in ("d", "cx", "cy", "r", "rx", "ry", "transform") if k in a)
+        out.append(f'<{tag}{geo} fill="{W if filled else "none"}" stroke="{W}" stroke-width="{fm(sw + 2 * h)}"/>')
+    return "".join(out)
+
+
+def _mul(a, b):
+    return (a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3],
+            a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5])
+
+
+def _tf(s):
+    m = (1, 0, 0, 1, 0, 0)
+    for fn, args in re.findall(r"(\w+)\(([^)]*)\)", s):
+        v = [float(x) for x in re.split(r"[\s,]+", args.strip())]
+        if fn == "translate":
+            t = (1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0)
+        elif fn == "scale":
+            t = (v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0)
+        elif fn == "rotate":
+            c, s_ = math.cos(math.radians(v[0])), math.sin(math.radians(v[0]))
+            t = (c, s_, -s_, c, 0, 0)
+            if len(v) == 3:
+                t = _mul(_mul((1, 0, 0, 1, v[1], v[2]), t), (1, 0, 0, 1, -v[1], -v[2]))
+        else:
+            raise ValueError(fn)
+        m = _mul(m, t)
+    return m
+
+
+def _path_pts(d):
+    """points whose box contains an absolute-coordinate path (M L Q C A Z)"""
+    toks = re.findall(r"[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)", d)
+    pts, i, cmd, cur = [], 0, "M", (0.0, 0.0)
+    take = {"M": 2, "L": 2, "Q": 4, "C": 6, "A": 7}
+    while i < len(toks):
+        if toks[i].isalpha():
+            cmd = toks[i]
+            i += 1
+            continue
+        if cmd not in take:
+            raise ValueError(cmd)
+        v = [float(t) for t in toks[i:i + take[cmd]]]
+        i += take[cmd]
+        if cmd == "A":
+            rx, ry = v[0], v[1]
+            (px, py), end = cur, (v[5], v[6])
+            gap = math.hypot(end[0] - px, end[1] - py)
+            if min(abs(gap - 2 * rx), abs(gap - 2 * ry)) < 0.05 * max(rx, ry):   # half ellipse: centred between
+                cx, cy = (px + end[0]) / 2, (py + end[1]) / 2
+                pts += [(cx - rx, cy - ry), (cx + rx, cy + ry), end]
+            else:                                                                # any other arc: generous
+                r = 2 * max(rx, ry)
+                pts += [(px - r, py - r), (px + r, py + r), (end[0] - r, end[1] - r), (end[0] + r, end[1] + r)]
+            cur = end
+        else:
+            pts += list(zip(v[0::2], v[1::2]))
+            cur = pts[-1]
+    return pts
+
+
+def bbox(svg):
+    """conservative bounding box of drawn markup (control points, arcs grown, strokes included)"""
+    stack, skip = [(1, 0, 0, 1, 0, 0)], 0
+    x0 = y0 = 1e9
+    x1 = y1 = -1e9
+    for m in TAG_RE.finditer(svg):
+        close, tag, attrs, selfc = m.groups()
+        if tag == "clipPath":
+            skip += -1 if close else 1
+            continue
+        if skip:
+            continue
+        if close:
+            if tag == "g":
+                stack.pop()
+            continue
+        a = dict(ATTR_RE.findall(attrs))
+        cur = _mul(stack[-1], _tf(a["transform"])) if "transform" in a else stack[-1]
+        if tag == "g":
+            if not selfc:
+                stack.append(cur)
+            continue
+        if tag == "path":
+            pts = _path_pts(a["d"])
+        elif tag in ("circle", "ellipse"):
+            cx, cy = float(a["cx"]), float(a["cy"])
+            rx = float(a.get("r", a.get("rx", 0)))
+            ry = float(a.get("r", a.get("ry", 0)))
+            pts = [(cx - rx, cy - ry), (cx + rx, cy + ry)]
+        else:
+            continue
+        h = float(a.get("stroke-width", 0)) / 2 if a.get("stroke", "none") != "none" else 0
+        for (x, y) in pts:
+            for dx in (-h, h):
+                for dy in (-h, h):
+                    X = cur[0] * (x + dx) + cur[2] * (y + dy) + cur[4]
+                    Y = cur[1] * (x + dx) + cur[3] * (y + dy) + cur[5]
+                    x0, y0, x1, y1 = min(x0, X), min(y0, Y), max(x1, X), max(y1, Y)
+    return x0, y0, x1, y1
+
+
+def pivot(cls, px, py, inner):
+    return (f'<g transform="translate({fm(px)} {fm(py)})"><g class="{cls}">'
+            f'<g transform="translate({fm(-px)} {fm(-py)})">{inner}</g></g></g>')
+
+
+def wrap(cls, inner):
+    return f'<g class="{cls}">{inner}</g>'
+
+
+def look(r, glance, inner):
+    return f'<g class="sf-look" data-look="{fm(r, 1)}"><g class="{glance}">{inner}</g></g>'
+
+
+class Motion:
+    def __init__(self):
+        self.defs, self.css, self.classes, self.k = [], [], [], 0
+
+    def uid(self, p):
+        self.k += 1
+        return f"{p}{self.k}"
+
+    def ink(self, svg, pad=4):
+        """own ink filter for one moving part, its region just around the part"""
+        x0, y0, x1, y1 = bbox(svg)
+        x0, y0, x1, y1 = math.floor(x0 - pad), math.floor(y0 - pad), math.ceil(x1 + pad), math.ceil(y1 + pad)
+        fid = self.uid("k")
+        self.defs.append(f'<filter id="{fid}" filterUnits="userSpaceOnUse" x="{x0}" y="{y0}" width="{x1 - x0}" '
+                         f'height="{y1 - y0}">{INK_FX}</filter>')
+        return f'<g filter="url(#{fid})">{svg}</g>'
+
+    def clip(self, d, svg, evenodd=False):
+        cid = self.uid("q")
+        rule = ' clip-rule="evenodd"' if evenodd else ""
+        self.defs.append(f'<clipPath id="{cid}"><path d="{d}"{rule}/></clipPath>')
+        return f'<g clip-path="url(#{cid})">{svg}</g>'
+
+    def anim(self, cls, frames, dur, delay=0.0, ease=EASE):
+        """frames [(percent, declarations)]; 0% and 100% must be the identical rest pose"""
+        frames = sorted(frames, key=lambda f: f[0])
+        assert frames[0][0] == 0 and frames[-1][0] == 100 and frames[0][1] == frames[-1][1], cls
+        body = f"0%,100%{{{frames[0][1]}}}" + "".join(f"{fm(p)}%{{{d}}}" for p, d in frames[1:-1])
+        self.css.append(f"@keyframes {cls}{{{body}}}")
+        self.css.append(f".{cls}{{animation:{cls} {fm(dur)}s {ease} {fm(delay)}s infinite;transform-origin:0 0}}")
+        self.classes.append(cls)
+
+
+def rot(pts):
+    return [(p, f"transform:rotate({fm(a)}deg)") for p, a in pts]
+
+
+def pendulum(amp, k=12, phase=0.0):
+    """sine swing through the rest pose (linear between k samples)"""
+    return rot([(100 * i / k, amp * math.sin(2 * math.pi * i / k + phase) - amp * math.sin(phase)) for i in range(k + 1)])
+
+
+def blink(dur, at, closed=0.08):
+    """scaleY blinks: shut over 80 ms, held shut 120 ms, open over 100 ms"""
+    f = [(0, "transform:scaleY(1)"), (100, "transform:scaleY(1)")]
+    for t in at:
+        f += [(100 * t / dur, "transform:scaleY(1)"), (100 * (t + 0.08) / dur, f"transform:scaleY({closed})"),
+              (100 * (t + 0.2) / dur, f"transform:scaleY({closed})"), (100 * (t + 0.3) / dur, "transform:scaleY(1)")]
+    return f
+
+
+def moves(pts):
+    """[(percent, dx, dy, opacity or None, scale or None)] -> frames"""
+    out = []
+    for p, dx, dy, op, sc in pts:
+        d = f"transform:translate({fm(dx, 1)}px,{fm(dy, 1)}px) scale({fm(sc if sc is not None else 1, 3)})"
+        if op is not None:
+            d += f";opacity:{fm(op)}"
+        out.append((p, d))
+    return out
+
+
+# ---- smoke: a relay of puffs along one spine ------------------------------------------------
+# The spine runs from behind Nib (the chimney mouth) up and back to the upper left. Each puff
+# drifts along its own stretch of it at a steady pace, keeping its sideways offset: it fades in a
+# little behind its drawn spot, passes through that spot (where it sits at t=0, exactly as
+# caravan.svg draws it), grows a little and fades out ahead, then restarts invisibly. The freshest
+# puff restarts behind Nib, so the chimney keeps sending out new smoke; further out, puffs fade
+# in where the one ahead of them faded out, so the trail flows without ever scaling a small puff
+# up into a big one (its outline would thicken).
+SMOKE_SPINE = [(217, 174), (199, 160), (181, 139), (140, 107), (96, 72), (58, 50), (28, 41), (4, 37), (-60, 31)]
+# per puff (same order as PUFFS): spine distance travelled before / after the drawn spot, seconds
+SMOKE_RUNS = ((26, 16, 9.0), (30, 20, 8.6), (30, 20, 8.2), (36, 26, 8.8), (30, 36, 7.4), (30, 34, 7.0),
+              (30, 34, 6.6), (26, 40, 6.1), (21, 30, 5.5))
+# start offsets chosen (by a search over 60 s) so the puffs' fades never line up and the trail stays full
+SMOKE_DELAYS = (-3.2, -7.5, -1.6, -6.5, -2.6, -3.6, -5.1, -1.0, -4.0)
+SMOKE_IN = 9         # fade-in distance after a restart
+SMOKE_OUT = 12        # fade-out distance before the end of a run (shorter if the run ends at the canvas edge)
+SMOKE_GROW = 0.006    # scale gained per unit of travel
+
+
+class Spine:
+    def __init__(self, pts, k=40):
+        m = len(pts)
+        self.p = []
+        for i in range(m - 1):
+            p0, p1, p2, p3 = pts[max(0, i - 1)], pts[i], pts[i + 1], pts[min(m - 1, i + 2)]
+            for j in range(k):
+                t = j / k
+                self.p.append(tuple(0.5 * (2 * p1[q] + (p2[q] - p0[q]) * t + (2 * p0[q] - 5 * p1[q] + 4 * p2[q] - p3[q]) * t * t
+                                           + (3 * p1[q] - p0[q] - 3 * p2[q] + p3[q]) * t ** 3) for q in (0, 1)))
+        self.p.append(pts[-1])
+        self.acc = [0.0]
+        for a, b in zip(self.p, self.p[1:]):
+            self.acc.append(self.acc[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        self.length = self.acc[-1]
+
+    def at(self, s):
+        s = max(0.0, min(s, self.length - 1e-6))
+        i = max(0, min(len(self.p) - 2, bisect.bisect_right(self.acc, s) - 1))
+        (ax, ay), (bx, by) = self.p[i], self.p[i + 1]
+        seg = self.acc[i + 1] - self.acc[i]
+        f = (s - self.acc[i]) / seg
+        tx, ty = (bx - ax) / seg, (by - ay) / seg
+        return (ax + (bx - ax) * f, ay + (by - ay) * f), (tx, ty), (-ty, tx)
+
+    def project(self, x, y):
+        j = min(range(len(self.p)), key=lambda i: (self.p[i][0] - x) ** 2 + (self.p[i][1] - y) ** 2)
+        s = self.acc[j]
+        (cx, cy), (tx, ty), (nx, ny) = self.at(s)
+        return s, (x - cx) * tx + (y - cy) * ty, (x - cx) * nx + (y - cy) * ny
+
+
+def smoke_frames():
+    """[(frames, seconds)] per puff"""
+    sp = Spine(SMOKE_SPINE)
+    out = []
+    for (x, y, r, _), (back, fwd, dur) in zip(PUFFS, SMOKE_RUNS):
+        si, u, w = sp.project(x, y)
+
+        def pos(s):
+            (cx, cy), (tx, ty), (nx, ny) = sp.at(s)
+            return cx + nx * w + tx * u - x, cy + ny * w + ty * u - y
+
+        def scale(s):
+            return 1 + SMOKE_GROW * (s - si)
+
+        end = si
+        while end < si + fwd:               # a run stops before the puff (and its halo) reaches the edge
+            dx, dy = pos(end + 0.5)
+            rad = r * scale(end + 0.5) * 1.3 + 5.5
+            if x + dx - rad < 0 or y + dy - rad < 0:
+                break
+            end += 0.5
+        start = max(0.0, si - back)
+        out_len = min(SMOKE_OUT, end - si)
+        assert si - start >= SMOKE_IN, (x, y)
+        run = end - start
+        tw = (end - si) / run                # this puff reaches the end of its run (invisible) and restarts
+        stops = sorted({si, end - out_len, end, start, start + SMOKE_IN} | {start + run * q / 6 for q in range(1, 6)})
+
+        def op(s):
+            return min(1.0, (s - start) / SMOKE_IN, (end - s) / out_len if out_len else 1.0)
+
+        rows = []
+        for s in stops:
+            t = (s - si) / run if s >= si else tw + 0.0004 + (s - start) / run * (1 - tw - 0.0004)
+            rows.append((t, s))
+        rows += [(1.0, si)]
+        fr, seen = [], set()
+        for t, s in sorted(rows):
+            pct = round(100 * t, 2)
+            if pct in seen:
+                continue
+            seen.add(pct)
+            dx, dy = pos(s) if 0 < t < 1 else (0.0, 0.0)
+            fr.append((pct, dx, dy, round(max(0.0, op(s)), 2) if 0 < t < 1 else 1.0, scale(s) if 0 < t < 1 else 1.0))
+        out.append((moves(fr), dur))
+    return out
+
+
+def motion_svg(body):
+    mo = Motion()
+    H = HALO
+    bk, art = [], []
+
+    # ---- smoke from the chimney ------------------------------------------------------------
+    for i, ((x, y, r, _), (frames, dur)) in enumerate(zip(PUFFS, smoke_frames())):
+        cls = f"cv-smoke{i}"
+        mo.anim(cls, frames, dur, SMOKE_DELAYS[i], "linear")
+        pz = unmark(piece(body, f"puff{i}"))
+        bk.append(pivot(cls, x, y, halo(pz, H)))
+        art.append(pivot(cls, x, y, mo.ink(pz)))
+    for i, ((x, y, r, sw), dur, delay) in enumerate(zip(SMOKE_BUBBLES, (4.7, 5.9, 5.3), (-1.1, -3.4, -0.4))):
+        cls = f"cv-ring{i}"
+        mo.anim(cls, moves([(0, 0, 0, 1, 1), (38, -9, -7, 0, 1.25), (38.2, 7, 6, 0, 0.5), (64, 0, 0, 1, 1),
+                            (100, 0, 0, 1, 1)]), dur, delay, "ease-in-out")
+        pz = unmark(piece(body, f"bub{i}"))
+        bk.append(pivot(cls, x, y, halo(pz, H)))
+        art.append(pivot(cls, x, y, mo.ink(pz)))
+    for i in range(2):                       # wind curls: fixed, but painted over the drifting puffs
+        pz = unmark(piece(body, f"curl{i}"))
+        bk.append(halo(pz, H))
+        art.append(mo.ink(pz))
+
+    # ---- Nib on the chimney: waves, blinks, looks; ink drops bob --------------------------
+    nb = piece(body, "nib")
+    hn = H / 0.56
+    still_nib = unmark(cut(nb, "nib-drop0", "nib-drop1", "nib-drop2", "nib-arm", "nib-eyes"))
+    nbk = [g(halo(still_nib, hn), NIB_TR)]
+    for i, (dur, delay, dy) in enumerate(((3.9, -0.6, -2.4), (4.7, -2.9, -2.0), (5.5, -1.7, -2.6))):
+        cls = f"cv-nibdrop{i}"
+        mo.anim(cls, moves([(0, 0, 0, None, None), (50, 0, dy, None, None), (100, 0, 0, None, None)]), dur, delay)
+        pz = unmark(piece(nb, f"nib-drop{i}"))
+        nbk.append(wrap(cls, g(halo(pz, hn), NIB_TR)))
+        art.append(wrap(cls, mo.ink(g(pz, NIB_TR))))
+    art.append(mo.ink(g(still_nib, NIB_TR)))
+    ax, ay = tf_nib(33, 6)                   # shoulder
+    mo.anim("cv-nibwave", rot([(0, 0), (6, -14), (13, 7), (20, -14), (27, 7), (34, -10), (42, 0), (100, 0)]), 5.2, -1.3)
+    pz = unmark(piece(nb, "nib-arm"))
+    nbk.append(pivot("cv-nibwave", ax, ay, g(halo(pz, hn), NIB_TR)))
+    art.append(pivot("cv-nibwave", ax, ay, mo.ink(g(pz, NIB_TR))))
+    eyes = []
+    for (ex, px, g1, g2) in ((-12, -7, (-9.3, -2.2), (-5, 3)), (16, 21, (18.7, -2.2), (23, 3))):
+        wx, wy = tf_nib(ex, -2)
+        pupil = Cw(*tf_nib(px, 0.5), 6.6 * 0.56, INK) + Cw(*tf_nib(*g1), 2.5 * 0.56, W) + Cw(*tf_nib(*g2), 0.56, W)
+        eyes.append((Cw(wx, wy, 13 * 0.56, W), mo.clip(circ_w(wx, wy, 13 * 0.56), look(2.2, "cv-nibglance", pupil))))
+    mo.anim("cv-nibblink", blink(5.3, (2.6,)), 5.3, -0.7)
+    mo.anim("cv-nibglance", moves([(0, 0, 0, None, None), (40, 0, 0, None, None), (44, -2.2, -1.2, None, None),
+                                   (61, -2.2, -1.2, None, None), (65, 0, 0, None, None), (100, 0, 0, None, None)]), 7.9, -2.1)
+    art.append(pivot("cv-nibblink", *tf_nib(2, -2), mo.ink(eyes[0][0] + eyes[1][0] + eyes[0][1] + eyes[1][1])))
+    rim = [(202.5, 182), (254, 182), (254, 203), (202.5, 203)]     # no white over the chimney rim Nib sits in
+    bk.append(mo.clip(outside(rim, (180, 100, 280, 210)), "".join(nbk), True))
+
+    # ---- hanging pot swings from its hook; a curl of steam rises ---------------------------
+    pz = unmark(piece(body, "pot-swing"))
+    mo.anim("cv-pot", pendulum(4.2), 5.6, -2.2, "linear")
+    bracket = outside([(147, 331), (215, 337), (215, 350), (213, 376), (205, 376), (167, 344), (155, 343.5), (155, 352.5),
+                       (145, 352.5), (145, 331)], (100, 300, 230, 440))   # bracket arm, brace, hook: no white
+    bk.append(mo.clip(bracket, pivot("cv-pot", 151, 349.2, halo(pz, H)), True))
+    art.append(pivot("cv-pot", 151, 349.2, mo.ink(pz)))
+    pz = unmark(piece(body, "pot-steam"))
+    mo.anim("cv-potsteam", moves([(0, 0, 0, 1, None), (34, 0, -9, 0, None), (34.3, 0, 5, 0, None), (62, 0, 0, 1, None),
+                                  (100, 0, 0, 1, None)]), 4.1, -0.9, "ease-in-out")
+    bk.append(mo.clip(bracket, wrap("cv-potsteam", halo(pz, H)), True))
+    art.append(wrap("cv-potsteam", mo.ink(pz)))
+
+    # ---- Pip: the lantern swings from his fist, the scarf tail flutters, he blinks and looks
+    hp = H / 0.66
+    lant = piece(body, "lantern")
+    rays = unmark(piece(lant, "lantern-rays"))
+    lamp = unmark(cut(lant, "lantern-rays"))
+    lx, ly = tf_pip(-82, -61)
+    mo.anim("cv-lantern", pendulum(4), 4.6, -1.5, "linear")
+    mo.anim("cv-glow", [(0, "opacity:1"), (30, "opacity:.6"), (45, "opacity:.85"), (70, "opacity:.5"), (100, "opacity:1")],
+            2.9, -0.8, "ease-in-out")
+    cuff = [tf_pip(x, y) for x, y in ((-76, -104), (12, -104), (12, -30), (-24, -32), (-50, -44), (-62, -47), (-72, -46),
+                                      (-76, -50))]
+    bk.append(mo.clip(outside(cuff, (280, 125, 375, 210)), pivot("cv-lantern", lx, ly, g(wrap("cv-glow", halo(rays, hp)) + halo(lamp, hp), PIP_TR)),
+                      True))
+    art.append(pivot("cv-lantern", lx, ly, mo.ink(g(wrap("cv-glow", rays) + lamp, PIP_TR))))
+    art.append(mo.ink(g(unmark(piece(body, "fist")), PIP_TR)))     # the fist stays over the lantern's bail
+    tail = unmark(piece(body, "tail"))
+    bits = unmark(piece(body, "tail-bits"))
+    sx, sy = tf_pip(SCARF_CUT, -79)
+    mo.anim("cv-scarf", rot([(0, 0), (14, -4.5), (30, 2.5), (46, -3.5), (62, 1.5), (78, -1.5), (100, 0)]), 3.3, -0.4)
+    # the moving end overlaps the fixed root by 3 (identical at rest, so a swing doubles a line instead
+    # of opening a gap); its white backing stops 3 short, so it never paints over the root
+    tcut = f"M-200 -200L{SCARF_CUT + 3} -200L{SCARF_CUT + 3} 0L-200 0Z"
+    tcut_bk = f"M-200 -200L{SCARF_CUT - 3} -200L{SCARF_CUT - 3} 0L-200 0Z"
+    edge = [bez3((-110, -84), (-96, -76), (-82, -80), (-66, -74), t / 40) for t in range(41)]
+    edge += [bez3((-66, -74), (-50, -68), (-40, -56), (-26, -48), t / 40) for t in range(1, 41)]
+    edge = [p for p in edge if -94 <= p[0] <= SCARF_CUT]
+    below = [tf_pip(*p) for p in edge + [(SCARF_CUT, 30), (-94, 30)]]    # sleeve, cuff, fist: no white over them
+    bk.append(mo.clip(outside(below, (275, 100, 365, 150)), pivot("cv-scarf", sx, sy, g(mo.clip(tcut_bk, halo(tail, hp)) + halo(bits, hp), PIP_TR)),
+                      True))
+    art.append(pivot("cv-scarf", sx, sy, mo.ink(g(mo.clip(tcut, tail) + bits, PIP_TR))))
+    peyes = ""
+    for ex in (-7, 15):
+        cx, cy = tf_pip(ex, -74)
+        peyes += look(1.3, "cv-pipglance", Ew(cx, cy, 4.6 * 0.66, 6.2 * 0.66, INK) + Cw(*tf_pip(ex - 1.6, -76.6), 1.9 * 0.66, W)
+                      + Cw(*tf_pip(ex + 1.4, -71.6), 0.8 * 0.66, W))
+    mo.anim("cv-pipblink", blink(4.3, (1.4,), 0.12), 4.3, -2.6)
+    mo.anim("cv-pipglance", moves([(0, 0, 0, None, None), (52, 0, 0, None, None), (56, -1.1, 0.3, None, None),
+                                   (74, -1.1, 0.3, None, None), (78, 0, 0, None, None), (100, 0, 0, None, None)]), 6.7, -1.2)
+    art.append(pivot("cv-pipblink", *tf_pip(4, -74), mo.ink(peyes)))
+
+    # ---- parasol sways on its pole; the fringe flickers -----------------------------------
+    pole = unmark(piece(body, "pole"))
+    cano = piece(body, "canopy")
+    canopy = unmark(cut(cano, "fringe"))
+    px, py = tf_tilt(430, POLE_CUT)          # the parasol sways about the pole's seam above the wheel
+    sway = [(0, 0), (16, 3), (34, -1.9), (52, 1.3), (68, -0.6), (82, 0.25), (100, 0)]
+    mo.anim("cv-parasol", rot(sway), 7.4, -1.9)
+    mo.anim("cv-fringe0", rot([(0, 0), (25, 11), (50, -6), (75, 8), (100, 0)]), 2.3, -0.5, "ease-in-out")
+    mo.anim("cv-fringe1", rot([(0, 0), (25, -9), (50, 7), (75, -10), (100, 0)]), 2.9, -1.6, "ease-in-out")
+    fr_a = fr_b = ""
+    for i, (a, b, c, d) in enumerate(FRINGE):
+        line = L(f"M{a} {b}L{c} {d}", 1.5)
+        fr_a += pivot(f"cv-fringe{i % 2}", a, b, line)
+        fr_b += pivot(f"cv-fringe{i % 2}", a, b, halo(line, H))
+
+    def pole_clip(s, y):
+        return mo.clip(f"M370 0L490 0L490 {fm(y)}L370 {fm(y)}Z", s)
+
+    bk.append(pivot("cv-parasol", px, py, g(pole_clip(halo(pole, H), POLE_CUT - 2) + halo(canopy, H) + fr_b, PARASOL_TILT)))
+    art.append(pivot("cv-parasol", px, py, mo.ink(g(pole_clip(pole, POLE_KNOB) + canopy + fr_a, PARASOL_TILT))))
+
+    # ---- bunting: pulled along by the parasol tip, each pennant flutters --------------------
+    # Rotating the string about its stalk end by beta and scaling it by (1 + sigma) moves its parasol end
+    # exactly as the rib tip moves (to first order), so the knot never slips off the tip.
+    (ex0, ey0), _, (bx, by) = BUNTING
+    tx, ty = tf_tilt(542, 79)                # the rib tip the string is tied to
+    qx, qy = tx - px, ty - py                # rib tip about the parasol pivot
+    lx2, ly2 = ex0 - bx, ey0 - by            # string end about its stalk end
+    det = -(lx2 * lx2 + ly2 * ly2)           # solve  beta*(-ly2, lx2) + sigma*(lx2, ly2) = (-qy, qx)
+    beta = (-qy * ly2 - lx2 * qx) / det      # degrees of string turn per degree of sway
+    sigma = (-ly2 * qx + lx2 * qy) / det     # string scale change per radian of sway
+    mo.anim("cv-bunting", [(p, f"transform:rotate({fm(a * beta, 3)}deg) scale({fm(1 + math.radians(a) * sigma, 4)})")
+                           for p, a in sway], 7.4, -1.9)
+    fa = fb = ""
+    for i, (x, y, ang, fl) in enumerate(bunting_flags()):
+        cls = f"cv-flag{i}"
+        sk = (8, -6, 4) if i % 2 else (-7, 6, -3)
+        mo.anim(cls, [(0, "transform:skewX(0deg) scaleY(1)"), (24, f"transform:skewX({sk[0]}deg) scaleY(.95)"),
+                      (52, f"transform:skewX({sk[1]}deg) scaleY(.98)"), (78, f"transform:skewX({sk[2]}deg) scaleY(.96)"),
+                      (100, "transform:skewX(0deg) scaleY(1)")], (3.1, 3.7, 3.3, 4.1, 3.5, 3.9, 3.2)[i], -0.45 * i)
+        tr = f"translate({n(x)} {n(y)}) rotate({n(ang)})"
+        back = f"rotate({n(-ang)}) translate({n(-x)} {n(-y)})"   # filter in viewBox space, so its noise matches the still
+        fa += g(wrap(cls, g(mo.ink(g(flag_art(fl), tr)), back)), tr)
+        fb += g(wrap(cls, halo(flag_art(fl), H)), tr)
+    string = unmark(piece(body, "b-string"))
+    bk.append(pivot("cv-bunting", bx, by, halo(string, H) + fb))
+    art.append(pivot("cv-bunting", bx, by, mo.ink(string) + fa))
+
+    # ---- teakettle steam -------------------------------------------------------------------
+    pz = unmark(piece(body, "k-steam"))
+    mo.anim("cv-steam", moves([(0, 0, 0, 1, None), (30, 2, -11, 0, None), (30.3, -1, 6, 0, None), (58, 0, 0, 1, None),
+                               (100, 0, 0, 1, None)]), 3.4, -1.2, "ease-in-out")
+    kbk = [wrap("cv-steam", halo(pz, H))]
+    art.append(wrap("cv-steam", mo.ink(pz)))
+    for i, (x, y, dur, delay) in enumerate(((651, 404, 4.4, -2.0), (644, 393, 5.0, -0.3))):
+        cls = f"cv-puffling{i}"
+        mo.anim(cls, moves([(0, 0, 0, 1, 1), (40, -5, -16, 0, 1.3), (40.3, 4, 9, 0, 0.5), (70, 0, 0, 1, 1),
+                            (100, 0, 0, 1, 1)]), dur, delay, "ease-in-out")
+        pz = unmark(piece(body, f"k-bub{i}"))
+        kbk.append(pivot(cls, x, y, halo(pz, H)))
+        art.append(pivot(cls, x, y, mo.ink(pz)))
+    bk.append(mo.clip(rect_d(600, 330, 720, 448), "".join(kbk)))
+
+    # ---- the lifted front leg paws from the knee: down toward the ground, up, back --------
+    shin = unmark(piece(body, "front-shin")) + unmark(piece(body, "swoosh"))
+    step = rot([(0, 0), (12, 0), (34, 10), (44, 10), (64, -5), (76, -5), (100, 0)])
+    mo.anim("cv-step", step, 6.6, -0.9)
+    # where the shin's white may show: open air right of the far leg (whose right edge, knee, ankle and pad
+    # it follows), below the hull and the lifted thigh, above the ground line
+    leg_air = [(704, 598), (800, 598), (800, 714.5), (691, 711.5), (686, 704.5), (676, 702), (667, 699), (694, 638),
+               (697, 630), (693, 623), (692, 610)]
+    bk.append(mo.clip(poly_d(leg_air), pivot("cv-step", 692, 610, halo(shin, H))))
+    art.append(pivot("cv-step", 692, 610, mo.ink(shin)))
+    art.append(mo.ink(unmark(piece(body, "front-knee"))))   # the knee plate stays over the swinging shin
+    for j in range(2):                      # dust shaken off the pad as it moves, back once it is up again
+        mo.anim(f"cv-dust{j}", moves([(0, 0, 0, 1, None), (10, 0, 4 + 2 * j, 0.7, None), (24, 0, 11 + 3 * j, 0, None),
+                                      (86 + 3 * j, 0, 0, 0, None), (95, 0, 0, 1, None), (100, 0, 0, 1, None)]), 6.6, -0.9,
+                "ease-in")
+    dbk = ""
+    for i in range(len(DUST)):
+        pz = unmark(piece(body, f"dust{i}"))
+        dbk += wrap(f"cv-dust{i % 2}", halo(pz, H))
+        art.append(wrap(f"cv-dust{i % 2}", mo.ink(pz)))
+    bk.append(mo.clip(rect_d(690, 690, 770, 711), dbk))       # white only above the ground line
+
+    # ---- snail head: eye stalks sway, eyes blink and look, headlamp rays pulse -------------
+    hh = H / 1.08
+    mo.anim("cv-blink", blink(6.1, (3.4, 3.75)), 6.1, -1.0)
+    mo.anim("cv-glance", moves([(0, 0, 0, None, None), (30, 0, 0, None, None), (34, -7, -3, None, None),
+                                (52, -7, -3, None, None), (56, 0, 0, None, None), (100, 0, 0, None, None)]), 8.3, -3.1)
+    stalk_sway = [(0, 0), (22, 2.6), (50, -2.2), (74, 1.2), (100, 0)]
+    mo.anim("cv-stalkr", rot(stalk_sway), 6.4, -0.4)
+    mo.anim("cv-stalkl", rot(stalk_sway), 6.4, -0.65)
+
+    def eye_parts(name, ed, r_look):
+        cx, cy, r, ppx, ppy = ed
+        er = piece(body, name)
+        ring = unmark(piece(er, f"{name}-ring"))
+        glint = unmark(piece(er, f"{name}-glint"))
+        k = mo.uid("q")
+        cd = circ(cx, cy, r)
+        mo.defs.append(f'<clipPath id="{k}"><path d="{cd}"/></clipPath>')
+        shade = F(circ(cx + r * 0.35, cy + r * 0.45, r * 0.9), DL) + P(circ(cx - r * 0.15, cy - r * 0.2, r * 0.95), W, 0)
+        lid = L(f"M{n(cx - r)} {n(cy + r * 0.62)}Q{n(cx)} {n(cy + r * 0.28)} {n(cx + r)} {n(cy + r * 0.62)}", 2.4)
+        wx, wy = tf_head(cx, cy)
+        wpx, wpy = tf_head(ppx, ppy)
+        s = 1.08
+        pupil = (Ew(wpx, wpy, r * 0.5 * s, r * 0.58 * s, INK) + Cw(*tf_head(ppx - r * 0.18, ppy - r * 0.22), r * 0.17 * s, W)
+                 + Cw(*tf_head(ppx + r * 0.2, ppy + r * 0.2), r * 0.07 * s, W))
+        ball = (g(f'<path d="{cd}" fill="{W}"/><g clip-path="url(#{k})">{shade}</g>', HEAD_TR)
+                + mo.clip(circ_w(wx, wy, r * s), look(r_look, "cv-glance", pupil))
+                + g(f'<g clip-path="url(#{k})">{lid}</g><path d="{cd}" fill="none" stroke="{INK}" stroke-width="3.6"/>', HEAD_TR))
+        return g(ring, HEAD_TR) + pivot("cv-blink", wx, wy, ball) + g(glint, HEAD_TR), halo(unmark(er), hh)
+
+    eye_r, eye_r_bk = eye_parts("eye-r", EYE_R, 7.6)
+    eye_l, eye_l_bk = eye_parts("eye-l", EYE_L, 8.5)
+    wr, wl = tf_head(*PIVOT_R), tf_head(*PIVOT_L)
+    st_r, st_l, strap = (unmark(piece(body, k)) for k in ("stalk-r", "stalk-l", "strap"))
+    dome = outside([tf_head(*p) for p in dome_offset(DOME_GAP)], (705, 110, 930, 320))
+    # the backing stops 1 further out, so its antialiased white never shows through the art's clip edge
+    dome_bk = outside([tf_head(*p) for p in dome_offset(DOME_GAP + 1)], (705, 110, 930, 320))
+    bk.append(mo.clip(dome_bk, pivot("cv-stalkl", *wl, g(halo(strap, hh), HEAD_TR))
+                      + pivot("cv-stalkr", *wr, g(halo(st_r, hh) + eye_r_bk, HEAD_TR))
+                      + pivot("cv-stalkl", *wl, g(halo(st_l, hh) + eye_l_bk, HEAD_TR)), True))
+    art.append(mo.clip(dome, pivot("cv-stalkl", *wl, mo.ink(g(strap, HEAD_TR)))
+                       + pivot("cv-stalkr", *wr, mo.ink(g(st_r, HEAD_TR) + eye_r))
+                       + pivot("cv-stalkl", *wl, mo.ink(g(st_l, HEAD_TR) + eye_l)), True))
+    rays = unmark(piece(body, "rays"))
+    hx, hy = tf_head(*LAMP)
+    mo.anim("cv-headlamp", [(0, "transform:scale(1);opacity:1"), (9, "transform:scale(1.14);opacity:.5"),
+                            (20, "transform:scale(1);opacity:1"), (31, "transform:scale(1.14);opacity:.5"),
+                            (44, "transform:scale(1);opacity:1"), (100, "transform:scale(1);opacity:1")], 3.3, -0.2)
+    bk.append(pivot("cv-headlamp", hx, hy, g(halo(rays, hh), HEAD_TR)))
+    art.append(pivot("cv-headlamp", hx, hy, mo.ink(g(rays, HEAD_TR))))
+
+    patterns = "".join(re.findall(r"<pattern .*?</pattern>", DEFS))
+    css = ("\n".join(mo.css) + "\n@media (prefers-reduced-motion: reduce){\n"
+           + ",".join("." + c for c in mo.classes) + "{animation:none!important}}")
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800" aria-hidden="true">'
+            f"<defs>{patterns}{''.join(mo.defs)}</defs><style>\n{css}\n</style>"
+            '<g stroke-linecap="round" stroke-linejoin="round">'
+            f"<g>{''.join(bk)}</g>{''.join(art)}</g></svg>")
+
+
+def main():
+    body = drawing()
+    for path, svg in ((OUT, page(unmark(body))), (OUT_BASE, base_svg(body)), (OUT_MOTION, motion_svg(body))):
+        with open(path, "w") as fh:
+            fh.write(svg)
+        print(f"wrote {os.path.normpath(path)} ({len(svg) / 1024:.0f} KB)")
+
+
+if __name__ == "__main__":
+    main()

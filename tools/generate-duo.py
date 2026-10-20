@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Builds ../assets/duo.svg: Pip and Juniper heading out on an adventure together.
 
+One run writes three files: duo.svg (the complete still), duo-base.svg (the still minus
+every moving part) and duo-motion.svg (only the moving parts, with their idle animation
+in an internal <style>; laid over the base it reproduces the still at rest).
+
 Pip (front-left) holds his brass lantern up high; Juniper (behind-right) leans on a
 walking staff, a bedroll on her back, and the two of them hold a map between them.
 Path data is hand-written; Python only assembles groups, clips, mirrored parts and
@@ -13,6 +17,8 @@ import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "assets", "duo.svg")
+OUT_BASE = os.path.join(HERE, "..", "assets", "duo-base.svg")
+OUT_MOTION = os.path.join(HERE, "..", "assets", "duo-motion.svg")
 
 INK = "#111"
 W = "#fff"
@@ -158,6 +164,11 @@ def g(content, tr=None, extra=""):
     return f"<g{t}{' ' + extra if extra else ''}>{content}</g>"
 
 
+def mv(name, s):
+    """mark a moving part: kept in the still, cut from the base, rebuilt in the motion layer"""
+    return f"<!--mv:{name}-->{s}<!--/mv-->"
+
+
 def mir(d, ax):
     """mirror an absolute M/L/C/Q/Z path about the vertical line x = ax"""
     toks = re.findall(r"[MLCQZ]|-?\d*\.?\d+", d)
@@ -267,6 +278,32 @@ def braid(pts, seed, w=12.5):
            + "</g>")
     out.append(tie)
     return "".join(out)
+
+
+# Juniper's moving bits (shared by the still and the motion layer)
+HEAD_TILT = "rotate(-4 470 320)"
+BANDAGE = "M-13 -5L13 -5L13 5L-13 5Z"
+BANDAGE_AT = "translate(427 274) rotate(-24)"
+
+
+def sprout_stems():
+    return L("M597 42C601 30 612 22 624 20", 4) + L("M604 30C602 22 596 18 590 18", 3)
+
+
+def leaf_right():
+    return S("M623 20C628 10 640 6 650 9C646 20 634 25 623 20Z", W, 3, L("M625 19L645 11", 1.4))
+
+
+def leaf_left():
+    return S("M591 18C582 10 570 10 563 16C571 25 584 25 591 18Z", W, 3, L("M590 18L567 16", 1.4))
+
+
+def juniper_eyes():
+    return E(445, 252, 10, 13, INK) + E(495, 252, 10, 13, INK)
+
+
+def juniper_shines():
+    return C(441, 246.5, 3.8) + C(491, 246.5, 3.8) + C(448.5, 258, 1.5) + C(498.5, 258, 1.5)
 
 
 def juniper():
@@ -401,9 +438,7 @@ def juniper():
     o.append(L("M586 226Q593 230 600 227", 1.8) + L("M607 598Q613 602 619 599", 1.8))
     o.append(S("M585 70C578 54 584 40 596 38C606 40 610 52 603 70Z", W, 4.4,
                F("M598 34L614 34L612 74L600 74Z", HA) + L("M590 52Q594 46 600 48", 1.6)))
-    o.append(L("M597 42C601 30 612 22 624 20", 4) + L("M604 30C602 22 596 18 590 18", 3))
-    o.append(S("M623 20C628 10 640 6 650 9C646 20 634 25 623 20Z", W, 3, L("M625 19L645 11", 1.4)))
-    o.append(S("M591 18C582 10 570 10 563 16C571 25 584 25 591 18Z", W, 3, L("M590 18L567 16", 1.4)))
+    o.append(mv("sprout", sprout_stems() + leaf_right() + leaf_left()))
     # string charm with a bead
     o.append(L("M588 96C580 104 578 118 582 128M600 98C606 108 606 118 602 130", 2) + C(582, 132, 4.4, DD, 2.2))
     o.append(P("M585 90L601 92L601 100L585 98Z", W, 2.4))
@@ -462,8 +497,7 @@ def juniper():
     h.append(L("M545 302C548 312 550 320 548 330", 4.6) + L("M545 302C548 312 550 320 548 330", 2, W)
              + P("M541 322L555 322L555 334L541 334Z", W, 2.4))
     # eyes
-    h.append(E(445, 252, 10, 13, INK) + E(495, 252, 10, 13, INK))
-    h.append(C(441, 246.5, 3.8) + C(491, 246.5, 3.8) + C(448.5, 258, 1.5) + C(498.5, 258, 1.5))
+    h.append(mv("juniper-eyes", juniper_eyes() + juniper_shines()))
     # determined brows
     h.append(T(427, 230, 440, 225, 456, 234, 3.4) + T(484, 234, 500, 225, 513, 230, 3.4))
     h.append(L("M465 270Q470 275 475 270", 2.4))
@@ -471,10 +505,10 @@ def juniper():
     h.append(P("M448 281Q472 302 496 277Q472 289 448 281Z", INK, 0))
     h.append(T(494, 279, 498, 275, 500, 270, 1.6) + T(449, 284, 446, 282, 445, 279, 1.2))
     h.append(E(513, 278, 11.5, 7, DL))
-    h.append(g(P("M-13 -5L13 -5L13 5L-13 5Z", W, 2.4) + P("M-4.5 -5L4.5 -5L4.5 5L-4.5 5Z", DL, 0)
+    h.append(g(P(BANDAGE, W, 2.4) + P("M-4.5 -5L4.5 -5L4.5 5L-4.5 5Z", DL, 0)
                + L("M-4.5 -5L-4.5 5M4.5 -5L4.5 5", 1.4) + C(-9, -1.5, 0.9, INK) + C(-9, 1.8, 0.9, INK)
-               + C(9, -1.5, 0.9, INK) + C(9, 1.8, 0.9, INK), "translate(427 274) rotate(-24)"))
-    o.append(g("".join(h), "rotate(-4 470 320)"))
+               + C(9, -1.5, 0.9, INK) + C(9, 1.8, 0.9, INK), BANDAGE_AT))
+    o.append(g("".join(h), HEAD_TILT))
     return "".join(o)
 
 
@@ -505,25 +539,34 @@ def fleece(pts, cx, cy, out=5, inn=10):
 # ---------------------------------------------------------------------------
 # THE MAP — held between Juniper's near hand and Pip's free hand
 # ---------------------------------------------------------------------------
+ROLL_L = "M344 506C344 500 358 500 358 506L360 588C360 595 346 595 344 588Z"
+ROLL_R = "M408 494C408 488 422 488 422 494L424 576C424 583 410 583 408 576Z"
+J_HAND = "M398 512C396 524 402 537 414 538C427 538 433 528 431 516C429 506 419 502 410 503C404 504 400 508 398 512Z"
+
+
+def map_sheet():
+    sheet = "M352 508C370 502 392 500 414 496L416 574C394 576 372 582 354 588Z"
+    return S(sheet, W, 3.6,
+             F("M394 494L420 494L420 580L398 580C402 552 400 520 394 494Z", DL)
+             + L("M362 574C372 562 364 548 378 542C392 536 384 522 398 514", 2, extra='stroke-dasharray="4 4"')
+             + L("M393 506L405 518M405 506L393 518", 3)
+             + P("M362 534L370 520L378 534Z", W, 1.8) + P("M372 530L382 512L392 530Z", HA, 1.8)
+             + L("M386 560Q391 556 396 560Q401 564 406 560M384 568Q389 564 394 568Q399 572 404 568", 1.4)
+             + L("M383 500L384 590", 1.2, extra='stroke-dasharray="2 4"')
+             + T(366, 556, 365, 550, 366, 544, 1.6) + C(366, 559, 2.2, INK))
+
+
 def shared_map():
     o = []
-    sheet = "M352 508C370 502 392 500 414 496L416 574C394 576 372 582 354 588Z"
-    o.append(S(sheet, W, 3.6,
-               F("M394 494L420 494L420 580L398 580C402 552 400 520 394 494Z", DL)
-               + L("M362 574C372 562 364 548 378 542C392 536 384 522 398 514", 2, extra='stroke-dasharray="4 4"')
-               + L("M393 506L405 518M405 506L393 518", 3)
-               + P("M362 534L370 520L378 534Z", W, 1.8) + P("M372 530L382 512L392 530Z", HA, 1.8)
-               + L("M386 560Q391 556 396 560Q401 564 406 560M384 568Q389 564 394 568Q399 572 404 568", 1.4)
-               + L("M383 500L384 590", 1.2, extra='stroke-dasharray="2 4"')
-               + T(366, 556, 365, 550, 366, 544, 1.6) + C(366, 559, 2.2, INK)))
-    o.append(S("M344 506C344 500 358 500 358 506L360 588C360 595 346 595 344 588Z", W, 3.6,
+    o.append(mv("sheet", map_sheet()))
+    o.append(S(ROLL_L, W, 3.6,
                F("M352 500L362 500L362 596L352 596Z", DM)))
     o.append(E(351, 505, 7, 3.2, W, 2.6) + L(spiral(351, 505, 4.6, 2, 1.5, 20), 1.2))
-    o.append(S("M408 494C408 488 422 488 422 494L424 576C424 583 410 583 408 576Z", W, 3.6,
+    o.append(S(ROLL_R, W, 3.6,
                F("M416 488L426 488L426 584L416 584Z", DM)))
     o.append(E(415, 493, 7, 3.2, W, 2.6) + L(spiral(415, 493, 4.6, 2, 1.5, 20), 1.2))
     # Juniper's near hand gripping the right-hand roll
-    o.append(S("M398 512C396 524 402 537 414 538C427 538 433 528 431 516C429 506 419 502 410 503C404 504 400 508 398 512Z",
+    o.append(S(J_HAND,
                W, 4.2, F("M416 500L436 500L436 540L416 540Z", DL)))
     o.append(L("M400 518Q410 520 420 516M400 526Q410 528 421 524", 1.8) + L("M424 508Q430 512 428 520", 2))
     return "".join(o)
@@ -557,14 +600,58 @@ def lantern():
     return "".join(o)
 
 
+# Pip's moving bits (shared by the still and the motion layer) and the shapes that cover them
+LANTERN_AT = "translate(112 286) rotate(24)"
+MOTHS = ((52, 226, -18), (172, 214, 22))
+JACKET = ("M202 446Q178 450 176 478Q164 500 172 524Q162 550 172 574Q168 600 194 604"
+          "L304 604Q330 600 326 574Q336 550 326 524Q334 500 322 478Q320 450 296 446Z")
+WRAP = "M192 426C224 444 272 444 304 426L308 458C274 476 222 476 188 458Z"
+FREE_ARM = "M282 470C300 462 318 470 330 488C340 502 348 516 352 528L326 546C318 532 306 516 294 506Z"
+P_CUFF = "M326 546L352 528L360 540L334 558Z"
+P_HAND = "M334 556C330 566 336 579 348 581C360 582 367 573 365 562C363 552 353 548 345 549C340 550 336 552 334 556Z"
+
+
+def scarf_tail():
+    tail = "M292 440C310 432 326 442 342 430C352 422 360 414 370 404L380 426C368 434 360 442 348 450C330 462 312 456 296 466Z"
+    return S(tail, W, 4.5, "".join(F(f"M{x} 380L{x + 12} 380L{x + 20} 480L{x + 8} 480Z", DD) for x in (306, 334, 360))
+             + L("M300 452C318 446 334 452 350 440", 1.6))
+
+
+def scarf_fringe():
+    return L("M376 404L384 394M380 412L390 405M382 420L392 418", 2.2)
+
+
+def scarf_mark():
+    return T(362, 392, 370, 384, 380, 382, 1.8)
+
+
+def moth_wings():
+    return (P("M0 0C-6 -12 -18 -14 -20 -6C-21 0 -12 4 0 2Z", DL, 2.4)
+            + P("M0 0C6 -12 18 -14 20 -6C21 0 12 4 0 2Z", DL, 2.4)
+            + P("M0 1C-4 6 -10 10 -12 6C-12 3 -6 2 0 1Z", W, 2)
+            + P("M0 1C4 6 10 10 12 6C12 3 6 2 0 1Z", W, 2))
+
+
+def moth_body():
+    return E(0, 0, 2.6, 7, INK) + L("M-1 -6Q-4 -12 -7 -13M1 -6Q4 -12 7 -13", 1.4)
+
+
+def moth_trail(mx, my):
+    return L(f"M{mx + 14} {my + 12}q6 4 12 2", 1.4, extra='stroke-dasharray="2 3"')
+
+
+def pip_eyes():
+    return E(226, 391, 9.5, 13, INK) + E(272, 391, 9.5, 13, INK)
+
+
+def pip_shines():
+    return C(222.5, 385.5, 3.8) + C(268.5, 385.5, 3.8) + C(229.5, 397, 1.5) + C(275.5, 397, 1.5)
+
+
 def pip():
     o = []
     # --- scarf tail streaming out behind him (to the right)
-    tail = "M292 440C310 432 326 442 342 430C352 422 360 414 370 404L380 426C368 434 360 442 348 450C330 462 312 456 296 466Z"
-    o.append(S(tail, W, 4.5, "".join(F(f"M{x} 380L{x + 12} 380L{x + 20} 480L{x + 8} 480Z", DD) for x in (306, 334, 360))
-               + L("M300 452C318 446 334 452 350 440", 1.6)))
-    o.append(L("M376 404L384 394M380 412L390 405M382 420L392 418", 2.2))
-    o.append(T(362, 392, 370, 384, 380, 382, 1.8))
+    o.append(mv("tail", scarf_tail() + scarf_fringe() + scarf_mark()))
 
     # --- legs, socks and big lace-up boots (feet planted a little apart)
     shin = "M206 640L236 640L234 712L208 712Z"
@@ -608,8 +695,7 @@ def pip():
                + T(222, 612, 228, 622, 226, 634, 1.6) + stitches("M186 644Q212 650 240 644")))
 
     # --- puffy jacket
-    jacket = ("M202 446Q178 450 176 478Q164 500 172 524Q162 550 172 574Q168 600 194 604"
-              "L304 604Q330 600 326 574Q336 550 326 524Q334 500 322 478Q320 450 296 446Z")
+    jacket = JACKET
     teeth = "".join(L(f"M246 {y}L252 {y}", 1.4) for y in range(462, 600, 6))
     o.append(S(jacket, W, 5.2,
                F("M290 440Q318 452 318 478Q330 500 320 524Q332 550 322 574Q326 596 300 608L340 608L340 440Z", DM)
@@ -640,22 +726,16 @@ def pip():
     o.append(S("M104 266C102 254 112 246 124 248C136 250 142 262 138 274C134 286 120 292 110 286C102 282 102 274 104 266Z",
                W, 4.4, F("M124 244L146 244L146 292L124 292Z", DL)))
     o.append(L("M108 262Q116 258 126 262M107 270Q115 266 126 270", 1.8) + L("M128 254Q134 262 130 272", 2.2))
-    o.append(g(lantern(), "translate(112 286) rotate(24)"))
-    for mx, my, rot in ((52, 226, -18), (172, 214, 22)):
-        moth = (P("M0 0C-6 -12 -18 -14 -20 -6C-21 0 -12 4 0 2Z", DL, 2.4)
-                + P("M0 0C6 -12 18 -14 20 -6C21 0 12 4 0 2Z", DL, 2.4)
-                + P("M0 1C-4 6 -10 10 -12 6C-12 3 -6 2 0 1Z", W, 2)
-                + P("M0 1C4 6 10 10 12 6C12 3 6 2 0 1Z", W, 2)
-                + E(0, 0, 2.6, 7, INK) + L("M-1 -6Q-4 -12 -7 -13M1 -6Q4 -12 7 -13", 1.4))
-        o.append(g(moth, f"translate({mx} {my}) rotate({rot})"))
-        o.append(L(f"M{mx + 14} {my + 12}q6 4 12 2", 1.4, extra='stroke-dasharray="2 3"'))
+    o.append(mv("lantern", g(lantern(), LANTERN_AT)))
+    for mx, my, rot in MOTHS:
+        o.append(mv("moth", g(moth_wings() + moth_body(), f"translate({mx} {my}) rotate({rot})") + moth_trail(mx, my)))
 
     # --- free arm reaching to hold the map
-    o.append(S("M282 470C300 462 318 470 330 488C340 502 348 516 352 528L326 546C318 532 306 516 294 506Z", W, 5,
+    o.append(S(FREE_ARM, W, 5,
                F("M318 470L360 520L340 540L322 520Z", DM) + L("M300 500Q316 496 334 494", 2.4)
                + stitches("M304 510Q318 506 336 504")))
-    o.append(S("M326 546L352 528L360 540L334 558Z", W, 3.6, "".join(L(f"M{322 + i * 6} 532L{332 + i * 6} 560", 1.5) for i in range(8))))
-    o.append(S("M334 556C330 566 336 579 348 581C360 582 367 573 365 562C363 552 353 548 345 549C340 550 336 552 334 556Z",
+    o.append(S(P_CUFF, W, 3.6, "".join(L(f"M{322 + i * 6} 532L{332 + i * 6} 560", 1.5) for i in range(8))))
+    o.append(S(P_HAND,
                W, 4.2, F("M350 546L370 546L370 584L350 584Z", DL)))
     o.append(L("M337 562Q347 566 358 562M337 570Q347 574 358 570", 1.8))
 
@@ -665,7 +745,7 @@ def pip():
     o.append(L("M207 536L205 548M214 537L213 550M221 537L221 551M228 537L229 550M235 536L237 548", 2.2))
 
     # --- scarf wrap round the neck
-    wrap = "M192 426C224 444 272 444 304 426L308 458C274 476 222 476 188 458Z"
+    wrap = WRAP
     o.append(S(wrap, W, 5, "".join(F(f"M{x} 420L{x + 13} 420L{x + 11} 480L{x - 2} 480Z", DD) for x in (204, 234, 264, 292))
                + L("M192 442C224 460 272 460 306 442", 1.8)))
     o.append(S("M206 450C200 446 196 456 200 466C206 474 222 474 230 466C236 458 232 448 224 448Z", W, 4,
@@ -682,8 +762,7 @@ def pip():
     o.append(P("M306 352L316 374L307 371L312 390L296 368L296 354Z", INK, 0))
     o.append(P("M222 356Q228 377 238 356Z", INK, 0) + P("M256 356Q264 374 272 356Z", INK, 0))
     # eyes, brows, nose, grin, cheeks, freckles
-    o.append(E(226, 391, 9.5, 13, INK) + E(272, 391, 9.5, 13, INK))
-    o.append(C(222.5, 385.5, 3.8) + C(268.5, 385.5, 3.8) + C(229.5, 397, 1.5) + C(275.5, 397, 1.5))
+    o.append(mv("pip-eyes", pip_eyes() + pip_shines()))
     o.append(T(211, 375, 223, 368, 237, 373, 3) + T(259, 373, 273, 368, 285, 375, 3))
     o.append(L("M243 404Q248 409 253 404", 2.4))
     o.append(P("M227 413Q248 446 269 413Q248 419 227 413Z", INK, 0))
@@ -735,19 +814,293 @@ DEFS = """<defs>
 </defs>"""
 
 
+# ---------------------------------------------------------------------------
+# MOTION LAYER — only the moving parts, each with its own small ink filter and its
+# animation in an internal <style>.  Every class and keyframe name starts with "du-".
+# ---------------------------------------------------------------------------
+# the ink kit with a roomier filter region for the moving parts; thin stroked parts, whose strokes
+# reach well past their geometric bounding box, get their own filter with an explicit region instead
+_INK = DEFS[DEFS.index("<filter"):DEFS.index("</filter>") + len("</filter>")]
+INK_PRIMS = _INK[_INK.index(">") + 1:-len("</filter>")]
+MOTION_DEFS = DEFS.replace(_INK, _INK.replace('x="-3%" y="-3%" width="106%" height="106%"',
+                                              'x="-20%" y="-20%" width="140%" height="140%"'))
+_thin = []
+EASE = "cubic-bezier(.45,0,.55,1)"
+
+
+def n2(v):
+    s = f"{v:.2f}".rstrip("0").rstrip(".")
+    return "0" if s in ("", "-0") else s
+
+
+def ink(inner, box=None):
+    """ink filter on a group inside a moving part; box (x, y, w, h) gives a thin part its own filter region"""
+    if box is None:
+        return f'<g filter="url(#ink)">{inner}</g>'
+    fid = f"ink-t{len(_thin)}"
+    x, y, w, h = box
+    _thin.append(f'<filter id="{fid}" filterUnits="userSpaceOnUse" x="{n2(x)}" y="{n2(y)}" '
+                 f'width="{n2(w)}" height="{n2(h)}">{INK_PRIMS}</filter>')
+    return f'<g filter="url(#{fid})">{inner}</g>'
+
+
+def piv(cls, inner, x, y):
+    """animated wrapper turning about (x, y) of the root frame"""
+    return (f'<g transform="translate({n2(x)} {n2(y)})"><g class="{cls}">'
+            f'<g transform="translate({n2(-x)} {n2(-y)})">{inner}</g></g></g>')
+
+
+def look(r, cls, inner):
+    """pupils: the page moves .sf-look to follow the cursor; idle glances go on the inner group"""
+    return f'<g class="sf-look" data-look="{r}"><g class="{cls}">{inner}</g></g>'
+
+
+def tilt(x, y, deg, cx, cy):
+    a = math.radians(deg)
+    dx, dy = x - cx, y - cy
+    return cx + dx * math.cos(a) - dy * math.sin(a), cy + dx * math.sin(a) + dy * math.cos(a)
+
+
+def lantern_pt(x, y):
+    """lantern-frame point -> root frame (translate(112 286) rotate(24))"""
+    a = math.radians(24)
+    return 112 + x * math.cos(a) - y * math.sin(a), 286 + x * math.sin(a) + y * math.cos(a)
+
+
+def cover_mask(mid, box, inner):
+    """luminance mask: everything visible except the inked silhouettes of the shapes that cover a part"""
+    x, y, w, h = box
+    return (f'<mask id="{mid}" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">'
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#fff"/>'
+            f'<g filter="url(#ink)" fill="#000" stroke="#000" stroke-linejoin="round" stroke-linecap="round">{inner}</g></mask>')
+
+
+def sil(d, sw):
+    return f'<path d="{d}" stroke-width="{sw}"/>'
+
+
+def lantern_motion():
+    """the lantern rebuilt as layers: rays (pulse), sparkles (twinkle), body, flame (flicker), glass front"""
+    o = []
+    rays = "".join(ray(0, 60, a, 50 if i % 2 else 54, (50 if i % 2 else 54) + (24 if i % 2 else 16), 3.2 if i % 2 else 2.6)
+                   for i, a in enumerate(range(20, 261, 30)))
+    o.append(piv("du-glow", ink(g(rays, LANTERN_AT)), *lantern_pt(0, 60)))
+    for i, (x, y, r) in enumerate(((-52, 20, 6), (44, 112, 5), (-46, 120, 4.5))):
+        star = T(x - r, y, x, y + 0.5, x + r, y, 1.4) + T(x, y - r, x + 0.5, y, x, y + r, 1.4)
+        o.append(piv(f"du-spark{i}", ink(g(star, LANTERN_AT)), *lantern_pt(x, y)))
+    glass = "M-20 44L20 44L20 88L-20 88Z"
+    k = nid()
+    body = (L("M-13 28C-14 8 -8 -2 0 -2C8 -2 14 8 13 28", 3.2)
+            + S("M-21 37L21 37L15 27C8 20 -8 20 -15 27Z", W, 3.4, F("M2 18L24 18L24 40L2 40Z", DM))
+            + S(circ(0, 19, 4.6), W, 2.6, F(circ(2, 21, 4), DM))
+            + P("M-26 37L26 37L26 44L-26 44Z", DD, 3)
+            + f'<path d="{glass}" fill="{W}"/>')
+    o.append(ink(g(body, LANTERN_AT)))
+    flame = (P("M0 50C7 60 10 68 6 76C3 80 -3 80 -6 76C-10 68 -7 60 0 50Z", W, 2.2)
+             + P("M0 61C3 66 4 70 2 74C1 75.5 -1 75.5 -2 74C-4 70 -3 66 0 61Z", INK, 0))
+    o.append(piv("du-flame", ink(g(flame, LANTERN_AT)), *lantern_pt(0, 79)))
+    front = (f'<clipPath id="{k}"><path d="{glass}"/></clipPath>'
+             f'<g clip-path="url(#{k})">' + L("M-8 44L-8 88M8 44L8 88", 2.2) + T(-15, 50, -16, 60, -15, 72, 1.8, INK)
+             + F("M10 44L20 44L20 88L10 88Z", DL) + "</g>"
+             + f'<path d="{glass}" fill="none" stroke="{INK}" stroke-width="3.4"/>'
+             + P("M-26 88L26 88L26 95L-26 95Z", DD, 3)
+             + S("M-22 95L22 95L17 106L-17 106Z", W, 3.2, F("M2 92L24 92L24 108L2 108Z", DM))
+             + L("M-20 41L-16 41M-6 41L-2 41M8 41L12 41", 1.4, W))
+    o.append(ink(g(front, LANTERN_AT)))
+    return "".join(o)
+
+
+# --- keyframes --------------------------------------------------------------
+def kf(name, frames):
+    """frames: [(percent, declarations)] -> one-line @keyframes"""
+    return f"@keyframes {name} {{ " + " ".join(f"{n2(p)}% {{ {d} }}" for p, d in frames) + " }"
+
+
+def rot_kf(name, pts):
+    return kf(name, [(p, f"transform: rotate({n2(a)}deg)") for p, a in pts])
+
+
+def blink_kf(name, period, closes):
+    """closes: start times (s) of each blink; ~70 ms to close, 120 ms shut, ~100 ms to open"""
+    fr = [(0, "transform: scaleY(1)")]
+    for t in closes:
+        for dt, v in ((0, 1), (0.07, 0.08), (0.19, 0.08), (0.29, 1)):
+            fr.append((100 * (t + dt) / period, f"transform: scaleY({v})"))
+    fr.append((100, "transform: scaleY(1)"))
+    return kf(name, fr)
+
+
+def shine_kf(name, period, closes):
+    """catch-lights go out while the eye is shut, so the closed eye reads as one clean line"""
+    fr = [(0, "opacity: 1")]
+    for t in closes:
+        fr += [(100 * (t + dt) / period, f"opacity: {v}") for dt, v in ((0, 1), (0.04, 0), (0.23, 0), (0.29, 1))]
+    return kf(name, fr + [(100, "opacity: 1")])
+
+
+def move_kf(name, pts):
+    return kf(name, [(p, f"transform: translate({n2(x)}px, {n2(y)}px)") for p, x, y in pts])
+
+
+def moth_kf(i, period, flight, rx, ry, sx, sy, tilt_deg, rot):
+    """one loop round the lantern in the first `flight` % of the cycle, then a slow hover"""
+    fr = []
+    steps = 30
+    for j in range(steps + 1):
+        u = j / steps
+        s = 0.5 - 0.5 * math.cos(math.pi * u)            # ease in and out of the loop
+        th = 2 * math.pi * s
+        x = sx * rx * (1 - math.cos(th))
+        y = sy * ry * math.sin(th) + 2.4 * math.sin(3 * th)
+        a = tilt_deg * math.sin(th)
+        fr.append((flight * u, x, y, a))
+    for j in range(1, 13):
+        u = j / 12
+        fr.append((flight + (100 - flight) * u, 0, -1.6 * math.sin(2 * math.pi * u), 0))
+    fly = kf(f"du-moth{i}", [(p, f"transform: translate({n2(x)}px, {n2(y)}px) rotate({n2(a)}deg)") for p, x, y, a in fr])
+    # wing beats: fast while looping, an occasional lazy beat while hovering
+    fl = [(0, 1)]
+    t, beat = 0.0, 0.26
+    end = period * flight / 100
+    while t + beat <= end:
+        fl += [(t + beat / 2, 0.28), (t + beat, 1)]
+        t += beat
+    for tb in (end + 0.9, end + 2.2, end + 2.65):
+        if tb + 0.4 < period:
+            fl += [(tb, 1), (tb + 0.2, 0.35), (tb + 0.4, 1)]
+    fl.append((period, 1))
+    # the wings fold across the moth's own (tilted) body axis
+    flap = kf(f"du-flap{i}", [(100 * tt / period, f"transform: rotate({rot}deg) scaleX({n2(v)}) rotate({-rot}deg)")
+                              for tt, v in fl])
+    trail = kf(f"du-trail{i}", [(0, "opacity: 1"), (3, "opacity: 0"), (flight - 2, "opacity: 0"),
+                                (flight + 8, "opacity: 1"), (100, "opacity: 1")])
+    return fly, flap, trail
+
+
+def motion_style():
+    kfs, rules = [], []
+
+    def anim(cls, dur, delay, ease=EASE):
+        rules.append(f".{cls} {{ animation: {cls} {dur}s {ease} {delay}s infinite; transform-origin: 0 0 }}")
+
+    # lantern: a small damped swing from the fist, flicker, glow and sparkles
+    kfs.append(rot_kf("du-swing", [(0, 0), (14, 4.5), (30, -3.6), (45, 2.2), (58, -1), (68, 0.3), (76, 0), (100, 0)]))
+    anim("du-swing", 6.1, -1.4)
+    fl = [(0, 1, 1, 0), (9, 0.93, 1.1, -3), (17, 1.04, 0.94, 2.5), (26, 0.96, 1.07, -1.5), (34, 1.02, 0.97, 1),
+          (47, 0.95, 1.08, -2.5), (58, 1.03, 0.95, 2), (66, 1, 1.03, 0), (79, 0.94, 1.09, 2.5), (88, 1.03, 0.96, -1.5),
+          (100, 1, 1, 0)]
+    # the flame stretches along the lantern's axis, which leans 24 degrees
+    kfs.append(kf("du-flame", [(p, f"transform: rotate(24deg) scale({n2(a)}, {n2(b)}) skewX({n2(c)}deg) rotate(-24deg)")
+                               for p, a, b, c in fl]))
+    anim("du-flame", 3.3, -0.7)
+    kfs.append(kf("du-glow", [(0, "transform: scale(1); opacity: 1"), (18, "transform: scale(1.07); opacity: 0.55"),
+                              (36, "transform: scale(1); opacity: 1"), (52, "transform: scale(1.04); opacity: 0.75"),
+                              (68, "transform: scale(1); opacity: 1"), (100, "transform: scale(1); opacity: 1")]))
+    anim("du-glow", 4.3, -2.1)
+    for i, (dur, delay) in enumerate(((3.7, -0.4), (4.9, -2.6), (5.3, -4.1))):
+        kfs.append(kf(f"du-spark{i}", [(0, "transform: scale(1); opacity: 1"), (7, "transform: scale(0.25); opacity: 0.3"),
+                                       (15, "transform: scale(1.18); opacity: 1"), (22, "transform: scale(1); opacity: 1"),
+                                       (100, "transform: scale(1); opacity: 1")]))
+        anim(f"du-spark{i}", dur, delay)
+    # moths
+    for i, (period, flight, rx, ry, sx, sy, tl, delay) in enumerate(((7.3, 46, 15, 13, 1, 1, 14, -0.8),
+                                                                    (8.6, 40, 12, 10, -1, -1, -12, -5.2))):
+        fly, flap, trail = moth_kf(i, period, flight, rx, ry, sx, sy, tl, MOTHS[i][2])
+        kfs += [fly, flap, trail]
+        anim(f"du-moth{i}", period, delay, "linear")
+        anim(f"du-flap{i}", period, delay)
+        anim(f"du-trail{i}", period, delay)
+    # scarf tail flutter, with the fringe whipping a beat later
+    kfs.append(rot_kf("du-tail", [(0, 0), (6, -3), (12, 2.2), (18, -1.6), (24, 1), (30, -0.4), (36, 0), (100, 0)]))
+    anim("du-tail", 5.3, -1.2)
+    kfs.append(rot_kf("du-fringe", [(0, 0), (8, 9), (14, -7), (20, 5), (26, -3), (32, 1.5), (38, 0), (100, 0)]))
+    anim("du-fringe", 5.3, -1.05)
+    # eyes
+    kfs.append(blink_kf("du-pip-blink", 4.7, [2.1]))
+    kfs.append(shine_kf("du-pip-shine", 4.7, [2.1]))
+    anim("du-pip-blink", 4.7, -0.3)
+    anim("du-pip-shine", 4.7, -0.3)
+    kfs.append(move_kf("du-pip-glance", [(0, 0, 0), (8, -2.4, -1.8), (36, -2.4, -1.8), (44, 0, 0), (62, 0, 0),
+                                         (69, 2.2, 0.6), (84, 2.2, 0.6), (91, 0, 0), (100, 0, 0)]))
+    anim("du-pip-glance", 7.9, -1.9)
+    kfs.append(blink_kf("du-jun-blink", 6.3, [3.6, 3.95]))
+    kfs.append(shine_kf("du-jun-shine", 6.3, [3.6, 3.95]))
+    anim("du-jun-blink", 6.3, -2.4)
+    anim("du-jun-shine", 6.3, -2.4)
+    kfs.append(move_kf("du-jun-glance", [(0, 0, 0), (9, -2.4, 1.6), (38, -2.4, 1.6), (46, 0, 0), (64, 0, 0),
+                                         (71, -2.6, -0.4), (86, -2.6, -0.4), (93, 0, 0), (100, 0, 0)]))
+    anim("du-jun-glance", 8.3, -5.6)
+    # sprout on the staff
+    kfs.append(rot_kf("du-sprout", [(0, 0), (15, 3), (34, -2.4), (50, 1), (62, 0), (100, 0)]))
+    anim("du-sprout", 5.9, -0.9)
+    kfs.append(rot_kf("du-leaf-r", [(0, 0), (12, -8), (26, 6), (40, -3), (52, 0), (100, 0)]))
+    anim("du-leaf-r", 4.1, -0.5)
+    kfs.append(rot_kf("du-leaf-l", [(0, 0), (14, 7), (28, -6), (42, 2.5), (54, 0), (100, 0)]))
+    anim("du-leaf-l", 4.6, -1.3)
+    # map sheet flexing in the breeze
+    kfs.append(kf("du-map", [(p, f"transform: skewX({n2(a)}deg) scale(1, {n2(b)})") for p, a, b in
+                             ((0, 0, 1), (5, -1.2, 1.03), (10, 0.8, 0.985), (15, -0.4, 1.015), (20, 0, 1), (100, 0, 1))]))
+    anim("du-map", 7.1, -3.3)
+    classes = [r.split(" ", 1)[0] for r in rules]
+    return ("<style>\n" + "\n".join(kfs) + "\n" + "\n".join(rules) + "\n"
+            + "@media (prefers-reduced-motion: reduce) { " + ", ".join(classes) + " { animation: none !important } }\n"
+            + "</style>")
+
+
+def motion():
+    defs = [MOTION_DEFS[:-len("</defs>")]]
+    # masks: the still shapes that lie over each moving part, so it slides under them
+    defs.append(cover_mask("du-m-eyes", (420, 225, 100, 70), g(g(sil(BANDAGE, 2.4), BANDAGE_AT), HEAD_TILT)))
+    defs.append(cover_mask("du-m-sheet", (330, 470, 120, 140),
+                           sil(ROLL_L, 3.6) + sil(ell(351, 505, 7, 3.2), 2.6) + sil(ROLL_R, 3.6)
+                           + sil(ell(415, 493, 7, 3.2), 2.6) + sil(J_HAND, 4.2) + sil(P_CUFF, 3.6) + sil(P_HAND, 4.2)))
+    defs.append(cover_mask("du-m-tail", (260, 360, 160, 140), sil(JACKET, 5.2) + sil(WRAP, 5) + sil(FREE_ARM, 5)))
+    o = []
+    # Juniper: sprout on the staff, eyes
+    o.append(piv("du-sprout", ink(sprout_stems()) + piv("du-leaf-r", ink(leaf_right()), 623.5, 20)
+                 + piv("du-leaf-l", ink(leaf_left()), 590.5, 18), 597, 42))
+    jx, jy = tilt(470, 252, -4, 470, 320)
+    o.append('<g mask="url(#du-m-eyes)">'
+             + piv("du-jun-blink", look(3, "du-jun-glance", ink(g(juniper_eyes(), HEAD_TILT))
+                                        + '<g class="du-jun-shine">' + ink(g(juniper_shines(), HEAD_TILT)) + "</g>"), jx, jy)
+             + "</g>")
+    # the map
+    o.append('<g mask="url(#du-m-sheet)">' + piv("du-map", ink(map_sheet()), 383, 502) + "</g>")
+    # Pip: scarf tail, lantern, moths, eyes
+    o.append('<g mask="url(#du-m-tail)">'
+             + piv("du-tail", ink(scarf_tail()) + piv("du-fringe", ink(scarf_fringe(), (366, 384, 36, 46)), 379, 413) + ink(scarf_mark()), 300, 452)
+             + "</g>")
+    o.append(piv("du-swing", lantern_motion(), 112, 286))
+    for i, (mx, my, rot) in enumerate(MOTHS):
+        at = f"translate({mx} {my}) rotate({rot})"
+        wings = piv(f"du-flap{i}", ink(g(moth_wings(), at)), mx, my)
+        o.append(piv(f"du-moth{i}", wings + ink(g(moth_body(), at)), mx, my))
+        o.append(f'<g class="du-trail{i}">' + ink(moth_trail(mx, my), (mx + 6, my + 4, 28, 18)) + "</g>")
+    o.append(piv("du-pip-blink", look(3, "du-pip-glance", ink(pip_eyes())
+                                      + '<g class="du-pip-shine">' + ink(pip_shines()) + "</g>"), 249, 391))
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 820" width="700" height="820" aria-hidden="true">'
+            + motion_style() + "".join(defs) + "".join(_thin) + "</defs>"
+            + f'<g stroke-linecap="round" stroke-linejoin="round">{"".join(o)}</g></svg>')
+
+
 def main():
     body = ("<!-- ground -->" + ground()
             + "<!-- juniper -->" + g(juniper(), extra='id="juniper"')
             + "<!-- map -->" + g(shared_map(), extra='id="map"')
             + "<!-- pip -->" + g(pip(), extra='id="pip"'))
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 820" width="700" height="820" role="img">'
-           "<title>Pip and Juniper heading out on an adventure: Pip holds his brass lantern up high and grins, "
-           "Juniper leans on her walking staff with a bedroll on her back, and they share a map between them</title>"
-           + DEFS
-           + f'<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">{body}</g></svg>')
-    with open(OUT, "w") as f:
-        f.write(svg)
-    print(f"wrote {OUT} ({len(svg) // 1024} KB)")
+
+    def page(content):
+        return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 820" width="700" height="820" role="img">'
+                "<title>Pip and Juniper heading out on an adventure: Pip holds his brass lantern up high and grins, "
+                "Juniper leans on her walking staff with a bedroll on her back, and they share a map between them</title>"
+                + DEFS
+                + f'<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">{content}</g></svg>')
+    still = page(re.sub(r"<!--/?mv(:[\w-]+)?-->", "", body))
+    base = page(re.sub(r"<!--mv:[\w-]+-->.*?<!--/mv-->", "", body, flags=re.S))
+    for path, svg in ((OUT, still), (OUT_BASE, base), (OUT_MOTION, motion())):
+        with open(path, "w") as f:
+            f.write(svg)
+        print(f"wrote {os.path.normpath(path)} ({len(svg) // 1024} KB)")
 
 
 if __name__ == "__main__":
