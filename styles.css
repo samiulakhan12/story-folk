@@ -707,8 +707,9 @@ html.motion-off .sf-motion * {
 	animation: none !important;
 }
 
-/* Offscreen overlays hold their pose and stop repainting. */
-.sf-motion.sf-paused * {
+/* Offscreen overlays hold their pose and stop repainting. motion.js marks every animated */
+/* element .sf-a, so pausing or playing restyles only those, not the whole drawing. */
+.sf-motion.sf-paused .sf-a {
 	animation-play-state: paused !important;
 }
 

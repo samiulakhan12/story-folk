@@ -8,20 +8,34 @@
 // stops the animations: every part falls back to its rest pose, and base plus rest pose
 // is the still, so nothing needs swapping back.
 //
-// Nothing is fetched before it is needed. The hero upgrades as soon as the page has
-// loaded; every other drawing only when its frame comes within about a viewport of the
-// screen. The heavy steps (parsing a motion file, inserting it) take turns, one per frame.
+// None of this work happens while the page scrolls. Once the page has loaded, the drawings
+// within a few viewports of the screen are prepared, nearest first, whenever the page is
+// calm (no scroll for CALM_MS, and the browser idle): first the still, then, with motion
+// on, the motion layer. Each heavy step (loading, parsing, inserting) gets a turn of its
+// own, one per frame. The still shows until the swap, so waiting costs nothing visible.
 (() => {
 	"use strict";
 
 	const KEY = "sf-motion";
+	const CALM_MS = 200; // the page counts as calm once it hasn't scrolled for this long
+	// How far ahead, in viewports, drawings are prepared. Stills go further: a still is what
+	// shows during a scroll, so decoding it in the middle of one would stall the scroll. An
+	// upgrade never runs mid-scroll anyway, so it only needs to be ready by arrival.
+	const STILL_AHEAD = 3;
+	const MOTION_AHEAD = 1.5;
 	const root = document.documentElement;
 	const reduce = matchMedia("(prefers-reduced-motion: reduce)");
 	const finePointer = matchMedia("(hover: hover) and (pointer: fine)");
 	const images = [...document.querySelectorAll("img[data-motion][data-motion-base]")];
 	const toggle = document.querySelector(".motion-toggle");
 	const overlays = []; // { svg, img, ownFit, looks, onScreen } for each motion layer on the page
-	const waiting = new Set(images); // images whose upgrade hasn't started yet
+	// The drawings in the first screen (no loading="lazy": the hero), noted before this script
+	// makes any of the others eager.
+	const firstScreen = new Set(images.filter((img) => img.getAttribute("loading") !== "lazy"));
+	const pending = new Set(images); // drawings whose upgrade hasn't started yet
+	const near = new Set(); // ...those of them within STILL_AHEAD of the screen
+	const close = new Set(); // ...and within MOTION_AHEAD
+	const asked = new Set(); // drawings whose still has been asked for
 
 	// A stored "on" or "off" wins; without one, follow the system setting.
 	// Storage can throw (private windows, blocked cookies), so every access is guarded.
@@ -44,20 +58,41 @@
 		watch();
 	}
 
-	// When each image upgrades. First the page's own images and fonts load, so motion never
-	// delays them. Then an image in the first screen (no loading="lazy": the hero) upgrades
-	// at once, and a lazy one when its frame comes within a viewport of the screen. With
-	// motion off nothing new starts; an upgrade already under way finishes, at rest.
-	const nearby = new IntersectionObserver((entries) => {
-		for (const entry of entries) if (entry.isIntersecting) upgrade(entry.target);
-	}, { rootMargin: "100% 0px" });
+	// Calm: no scroll for CALM_MS, then an idle period, checked again since a scroll can start
+	// while waiting for one. (Safari has no requestIdleCallback: there it is just after a frame.)
+	let lastScroll = -Infinity;
+	const scrolling = () => performance.now() - lastScroll < CALM_MS;
+	const idle = window.requestIdleCallback ? (go) => requestIdleCallback(go, { timeout: 1000 }) : (go) => setTimeout(go, 0);
+	function whenCalm(go) {
+		if (scrolling()) setTimeout(() => whenCalm(go), lastScroll + CALM_MS - performance.now());
+		else idle(() => (scrolling() ? whenCalm(go) : go()));
+	}
+
+	// Each heavy step waits for a turn: a frame, then calm. One step per turn, so two big SVGs
+	// are never parsed or inserted in the same frame, and none of it lands in a scroll.
+	let turns = Promise.resolve();
+	const turn = () => (turns = turns.then(() => new Promise((go) => requestAnimationFrame(() => whenCalm(go)))));
+
+	// Which drawings to prepare. Watching starts once the page's own images and fonts have
+	// loaded, so motion never delays them. The drawing in the first screen is always wanted;
+	// any other while its frame is within reach of the screen.
+	const watcher = (set, viewports) =>
+		new IntersectionObserver((entries) => {
+			for (const { target, isIntersecting } of entries) {
+				if (pending.has(target) && (isIntersecting || firstScreen.has(target))) set.add(target);
+				else set.delete(target);
+			}
+			work();
+		}, { rootMargin: `${viewports * 100}% 0px` });
+	const watchers = [watcher(near, STILL_AHEAD), watcher(close, MOTION_AHEAD)];
 
 	function watch() {
 		if (!loaded) return;
-		for (const img of waiting) {
-			if (!on) nearby.unobserve(img);
-			else if (img.getAttribute("loading") === "lazy") nearby.observe(img);
-			else upgrade(img);
+		for (const w of watchers) {
+			for (const img of pending) {
+				w.unobserve(img); // observing again reports where it is now
+				w.observe(img);
+			}
 		}
 	}
 	if (!loaded) {
@@ -67,15 +102,54 @@
 		}, { once: true });
 	}
 
-	// The heavy steps each wait for a turn: one turn per frame, in idle time when the
-	// browser offers some, so two big SVGs are never parsed or inserted in the same frame.
-	// (Safari has no requestIdleCallback: there a turn starts right after the frame.)
-	const idle = window.requestIdleCallback ? (go) => requestIdleCallback(go, { timeout: 400 }) : (go) => setTimeout(go, 0);
-	let turns = Promise.resolve();
-	const turn = () => (turns = turns.then(() => new Promise((go) => requestAnimationFrame(() => idle(go)))));
+	// One drawing at a time, nearest first, while any is left to prepare: a still to load
+	// (with motion on or off), or, with motion on and within MOTION_AHEAD, an upgrade. A
+	// drawing whose files are slow to arrive gets a few seconds, then keeps loading on its
+	// own while the next one starts.
+	const stillDue = (img) => !asked.has(img) && !img.complete;
+	const upgradeDue = (img) => on && pending.has(img) && close.has(img);
+	const atMost = (promise, ms) => Promise.race([promise, new Promise((done) => setTimeout(done, ms))]);
+	let working = false;
+	async function work() {
+		if (working) return;
+		working = true;
+		for (;;) {
+			await turn();
+			const img = nearest();
+			if (!img) break;
+			await atMost(prepare(img), 3000);
+		}
+		working = false;
+	}
 
-	// Ids get a per-file prefix: every motion file has its own "ink" filter, say, and
-	// they all end up in one document.
+	// The nearest drawing with something due. A turn starts just after a frame, so these
+	// layout reads are cheap.
+	function nearest() {
+		let best = null, distance = Infinity;
+		for (const img of new Set([...near, ...close])) {
+			if (!stillDue(img) && !upgradeDue(img)) continue;
+			const r = img.getBoundingClientRect();
+			const d = Math.max(0, r.top - innerHeight, -r.bottom);
+			if (d < distance) [best, distance] = [img, d];
+		}
+		return best;
+	}
+
+	async function prepare(img) {
+		// The still comes first: it is what shows until the swap, and loading it now, while
+		// the page is calm, keeps its decode out of the next scroll.
+		if (stillDue(img)) {
+			asked.add(img);
+			img.loading = "eager";
+			await img.decode().catch(() => {});
+			if (!upgradeDue(img)) return;
+			await turn();
+		}
+		if (upgradeDue(img)) await upgrade(img);
+	}
+
+	// Ids get a per-file prefix: every motion file has its own halftone patterns and clip
+	// paths, say, and they all end up in one document.
 	const prefixIds = (text, p) =>
 		text
 			.replace(/(\sid=["'])/g, `$1${p}`)
@@ -114,8 +188,10 @@
 	}
 
 	async function upgrade(img) {
-		if (!waiting.delete(img)) return; // already under way
-		nearby.unobserve(img);
+		pending.delete(img);
+		near.delete(img);
+		close.delete(img);
+		for (const w of watchers) w.unobserve(img);
 		let svg = null;
 		try {
 			const base = new Image();
@@ -129,13 +205,13 @@
 			await turn();
 			// Adopted, not imported: the parsed tree moves into the page instead of being copied.
 			svg = document.adoptNode(doc.documentElement);
-			// It starts paused; the offscreen observer below starts it once it is in view.
+			// It starts paused; the offscreen observer below plays it once it is in view.
 			svg.classList.add("sf-motion", "sf-paused");
 			svg.setAttribute("aria-hidden", "true");
 			svg.setAttribute("focusable", "false");
 			svg.removeAttribute("role");
 			const overlay = { svg, img, ownFit: svg.getAttribute("preserveAspectRatio"), looks: [...svg.querySelectorAll(".sf-look")], onScreen: false };
-			// A turn starts right after a frame, so the layout is clean and this read is cheap.
+			// A turn starts just after a frame, so the layout is clean and this read is cheap.
 			place(overlay, measure(overlay));
 			// One synchronous step, with the base already decoded: overlay and base appear
 			// in the same frame, so the drawing never flickers or doubles up.
@@ -188,29 +264,44 @@
 			const d = (elapsed - delay) % period;
 			fixes.push([a, d === 0 ? 0 : period - d]);
 		}
+		// Mark every animated element, so pausing (.sf-paused .sf-a in the CSS) restyles only
+		// those: the crowd has 328 of them among 6900 elements.
+		for (const a of anims) a.effect.target.classList.add("sf-a");
 		for (const [a, delay] of fixes) a.effect.updateTiming({ delay });
 	}
 
 	// Eyes follow the cursor. Each .sf-look carries data-look: its largest offset, in its
 	// file's viewBox units. Only those transforms are ever touched. The tracking costs
-	// nothing unless eyes are on screen and the pointer moved in the last IDLE_MS.
+	// nothing unless eyes are on screen and the pointer moved in the last IDLE_MS, and it
+	// holds still while the page scrolls: the eyes re-aim once, when the scroll settles.
 	const IDLE_MS = 2500;
 	const REACH_PX = 300; // pointer distance at which the eyes reach their full offset
 	const rest = new Map(); // .sf-look -> its rest centre and matrix, in its overlay's units
-	let pointer = null, lastMove = 0, frame = 0, idleTimer = 0, eyesOnScreen = false;
+	let pointer = null, lastMove = 0, frame = 0, idleTimer = 0, reaim = 0, eyesOnScreen = false;
 	const schedule = () => {
-		if (pointer && eyesOnScreen && !frame) frame = requestAnimationFrame(follow);
+		if (!pointer || !eyesOnScreen || frame) return;
+		if (!scrolling()) frame = requestAnimationFrame(follow);
+		else if (!reaim) reaim = setTimeout(() => ((reaim = 0), schedule()), lastScroll + CALM_MS - performance.now());
 	};
 
-	// Overlays out of view pause, so they cost nothing. One that comes into view while the
-	// cursor leads gets its eyes aimed.
+	// Overlays out of view pause at once, so they cost nothing. Overlays in view play, but
+	// only once the page is calm: starting one restyles its moving parts, which a scroll
+	// can do without. One that comes into view while the cursor leads gets its eyes aimed.
+	let playing = false;
 	const offscreen = new IntersectionObserver((entries) => {
 		for (const entry of entries) {
 			const o = overlays.find((o) => o.svg === entry.target);
 			o.onScreen = entry.isIntersecting;
-			o.svg.classList.toggle("sf-paused", !o.onScreen);
+			if (!o.onScreen) o.svg.classList.add("sf-paused");
 		}
 		eyesOnScreen = overlays.some((o) => o.onScreen && o.looks.length);
+		if (!playing) {
+			playing = true;
+			whenCalm(() => {
+				playing = false;
+				for (const o of overlays) if (o.onScreen) o.svg.classList.remove("sf-paused");
+			});
+		}
 		schedule();
 	});
 
@@ -241,6 +332,7 @@
 	function follow() {
 		frame = 0;
 		if (!pointer) return;
+		if (scrolling()) return schedule(); // a scroll began: hold still, re-aim once it settles
 		if (performance.now() - lastMove > IDLE_MS) return stopTracking();
 		const live = overlays.filter((o) => o.onScreen && o.looks.length);
 		// Every read before any write, so no layout is forced in between.
@@ -256,7 +348,7 @@
 				const vy = pointer.y - c.y;
 				const dist = Math.hypot(vx, vy);
 				// Screen offset: up to `reach` px towards the pointer, full at REACH_PX away, in
-				// whole device pixels (an ink-filtered part held at a fractional offset blurs).
+				// whole device pixels (a pupil held at a fractional offset blurs).
 				const k = dist < 0.5 ? 0 : (r.look * px * Math.min(1, dist / REACH_PX)) / dist;
 				const sx = Math.round(vx * k * dpr) / dpr;
 				const sy = Math.round(vy * k * dpr) / dpr;
@@ -271,14 +363,16 @@
 	function checkIdle() {
 		const left = lastMove + IDLE_MS - performance.now();
 		if (left > 0) idleTimer = setTimeout(checkIdle, left);
+		else if (scrolling()) idleTimer = setTimeout(checkIdle, CALM_MS); // not in mid-scroll
 		else stopTracking();
 	}
 
 	// Hand the eyes back to their idle glances.
 	function stopTracking() {
 		clearTimeout(idleTimer);
+		clearTimeout(reaim);
 		cancelAnimationFrame(frame);
-		idleTimer = frame = 0;
+		idleTimer = reaim = frame = 0;
 		pointer = null;
 		for (const { svg, looks } of overlays) {
 			for (const el of looks) el.style.removeProperty("transform");
@@ -297,8 +391,11 @@
 	document.addEventListener("pointerout", (event) => {
 		if (!event.relatedTarget && pointer) stopTracking(); // left the window
 	}, { passive: true });
-	// The page scrolled under a pointer that stays put: re-aim. Nothing to re-measure.
-	addEventListener("scroll", schedule, { passive: true });
+	// Note when the page last scrolled: heavy work and eye tracking wait for calm.
+	addEventListener("scroll", () => {
+		lastScroll = performance.now();
+		schedule();
+	}, { passive: true });
 	// The layout changed: refit every overlay, once per frame however many events arrive.
 	let refitting = 0;
 	addEventListener("resize", () => {

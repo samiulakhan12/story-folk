@@ -143,8 +143,8 @@ shared 5.4 s clock, so only part of it repaints at a time.
 The HTML carries only the stills. Each animated `<img>` names its motion files in
 `data-motion-base` and `data-motion` and sits in a positioned `.sf-frame` that takes its
 layout box. When motion is on, `motion.js` waits for the page to load, then upgrades the
-hero at once and every other drawing when its frame comes within a viewport of the screen
-(see [Performance](#performance)). For each one it:
+hero at once and every other drawing as its frame comes near the screen, whenever the page
+is calm (see [Performance](#performance)). For each one it:
 
 1. fetches `x-motion.svg` and preloads and decodes `x-base.svg`, in parallel;
 2. prefixes every id in the motion file (`id`, `url(#…)`, `href` and `xlink:href`), so the
@@ -167,9 +167,11 @@ Turning it back on starts every part from rest again, the same way.
 Pupils that can look around sit in a `<g class="sf-look" data-look="R">`, where R is their
 largest offset in the file's viewBox units. With a mouse or trackpad, `motion.js` moves
 them towards the pointer (fully at 300 px away and beyond), in whole device pixels so the
-inked pupils stay crisp, and holds the idle glances meanwhile. After 2.5 s without movement, or when the pointer leaves the window, the eyes
-go back to their own glances. `.sf-look` is reserved for this: the motion files never
-animate it, and the script touches nothing else.
+inked pupils stay crisp, and holds the idle glances meanwhile. While the page scrolls the
+eyes hold still, and they re-aim once it settles. After 2.5 s without movement, or when the
+pointer leaves the window, the eyes go back to their own glances, in step with the rest of
+their drawing. `.sf-look` is reserved for this: the motion files never animate it, and the
+script touches nothing else.
 
 ### Accessibility
 
@@ -199,41 +201,54 @@ animate it, and the script touches nothing else.
 ## Performance
 
 Most of the page's weight and work is in the drawings: eight large SVG stills and seven
-motion layers that repaint while they animate. The page keeps that cost to what is on screen.
+motion layers that repaint while they animate. The page keeps that cost to what is on screen,
+and keeps every one-off cost out of scrolling.
 
 - **Lazy loading.** Only the first screen loads eagerly: the logo, the hero letters
   (`fetchpriority="high"`; they are the largest paint) and the hero cast. Every drawing
   below has `loading="lazy"` and `decoding="async"`, and every `<img>` keeps its `width`
   and `height`, so nothing shifts as they arrive.
-- **Lazy motion.** `motion.js` upgrades the hero as soon as the page has loaded, and any
-  other drawing only when its frame comes within a viewport of the screen (an
-  `IntersectionObserver` with a 100% `rootMargin`). Nothing is fetched for drawings that are
-  never scrolled to, or while motion is off. Parsing a motion file and inserting it are
-  separate steps that take turns, one per frame, in idle time where the browser offers it.
-- **Offscreen pausing.** An overlay starts paused and plays only while it is on screen, so
-  drawings out of view cost nothing per frame.
+- **Nothing heavy while scrolling.** Each one-off step of a drawing (loading its still,
+  loading its base and motion file, parsing the motion file, inserting it) waits until the
+  page is calm: no scroll for 200 ms, and the browser idle (`requestIdleCallback`; just after
+  a frame in Safari). The steps take turns, one per frame. The still shows until the swap, so
+  waiting costs nothing visible: motion just starts a moment after the scroll stops.
+- **Looking ahead.** Whenever the page is calm, `motion.js` prepares the nearest drawings
+  first. It loads and decodes the still of every drawing within 3 viewports of the screen, so
+  no still is decoded in the middle of a scroll, and upgrades every drawing within 1.5
+  viewports, so the next ones already move when they arrive. The hero upgrades as soon as
+  the page has loaded. Nothing further away is fetched, and nothing for motion while motion
+  is off.
+- **Offscreen pausing.** An overlay pauses as soon as it leaves the screen, and plays again
+  once it is back on screen and the page is calm. Pausing restyles only its animated elements
+  (`.sf-a`, marked by the script), not the thousands of shapes around them.
 - **Cheap frames.** Each overlay is its own compositor layer with `contain: strict`. The
   script never reads layout after writing it: it reads every animation's timing before
   changing any, reads every overlay's box before refitting any, and keeps each eye's rest
   centre in its overlay's own units, so scrolling and resizing need no re-measuring. Its
-  scroll, resize and pointer listeners are all passive, and eye tracking does nothing unless
-  eyes are on screen and the pointer moved in the last 2.5 s.
+  scroll, resize and pointer listeners are all passive. Eye tracking does nothing unless eyes
+  are on screen and the pointer moved in the last 2.5 s, and holds still during a scroll.
 - **Filters baked into the art.** The ink wobble and the white halos used to be SVG filters,
   and filters were the main cost of every repaint and every tile rastered while scrolling.
   Filters are baked into the geometry by `tools/bake.mjs`, so none runs at draw time.
 
-Measured in headless Chromium (no GPU), cold load with the cache disabled, before and after
-this pass:
+Measured in headless Chromium (no GPU), cold load with the cache disabled, median of 3 runs,
+on the page before this work (every drawing and motion layer loaded up front) and now:
 
 | | Desktop 1440x900 @2x | Phone 390x844 @3x |
 | --- | --- | --- |
-| Bytes in the first 5 s | 4775 KB -> 1437 KB | 4775 KB -> 2211 KB |
-| Requests in the first 5 s | 38 -> 19 | 38 -> 23 |
-| Motion overlays after load | 7 -> 2 | 7 -> 3 |
-| DOM elements after 6 s | 5160 -> 2380 | 5160 -> 3132 |
+| Bytes in the first 5 s | 4775 KB -> 2242 KB | 4775 KB -> 2520 KB |
+| Requests in the first 5 s | 38 -> 23 | 38 -> 24 |
+| Long-task time in the first 6 s | 381 ms -> 51 ms | 191 ms -> 53 ms |
+| Main thread busy in the first 6 s | 1670 ms -> 739 ms | 1429 ms -> 753 ms |
+| Scroll-through, frames over 20 ms | 0.4% -> 0% | 0% -> 0% |
 
-Everything still arrives once the page has been scrolled through (the same 38 requests),
-only as it is needed. Byte counts are uncompressed, as the test server sent them.
+Loading the drawings lazily first moved their one-off work into the first scroll: the page
+loaded 1441 KB (desktop) and 2238 KB (phone) in its first 5 s, but 5.1% and 3.7% of the frames
+of a scroll-through ran over 20 ms (5.8% and 3.7% after 3 s at the hero). Preparing drawings
+ahead, and only while the page is calm, brought all four back to 0%, for the extra bytes
+above. A drawing a visitor scrolls past without stopping keeps its still; motion is fetched
+only near where they pause. Byte counts are uncompressed, as the test server sent them.
 
 ## Originality
 
