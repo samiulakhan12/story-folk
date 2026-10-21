@@ -696,6 +696,10 @@ a {
 	pointer-events: none;
 	/* Its own compositor layer, so the moving parts repaint alone. */
 	will-change: transform;
+	/* Its box comes from the frame, never from its content, and an inline SVG clips to its */
+	/* box anyway, so strict containment hides nothing. It guarantees that nothing inside, */
+	/* as it is inserted or moves, can touch the layout or paint of the page around it. */
+	contain: strict;
 }
 
 /* Motion off: every part snaps to its rest pose, and base plus rest pose is the still. */
