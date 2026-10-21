@@ -53,7 +53,11 @@
 	function apply() {
 		on = choice === "on" || (choice !== "off" && !reduce.matches);
 		root.classList.toggle("motion-off", !on);
-		if (on) overlays.forEach((o) => settle(o.svg)); // animations were just recreated
+		// Back on, every unparked overlay's loops were just recreated, on their authored phases;
+		// those in view start at once, as at the reveal (see start()). (Marked again, in case
+		// motion went off while an overlay was being inserted: off, it had no loops to mark.)
+		if (on) for (const o of overlays) mark(o.svg);
+		if (on) for (const o of overlays) if (o.onScreen && !parked(o)) start(o);
 		if (toggle) {
 			// The label names the action, like a video player's button, so no aria-pressed:
 			// "Play animations, pressed" would read as a contradiction.
@@ -229,7 +233,7 @@
 			await turn();
 			// Adopted, not imported: the parsed tree moves into the page instead of being copied.
 			svg = document.adoptNode(doc.documentElement);
-			// It starts parked (see the offscreen observer below), until it is in view.
+			// It starts parked (see the overlay watches below), until it comes near the screen.
 			svg.classList.add("sf-motion", "sf-paused");
 			svg.setAttribute("aria-hidden", "true");
 			svg.setAttribute("focusable", "false");
@@ -242,13 +246,13 @@
 			img.decoding = "sync";
 			img.after(svg);
 			dropReducedMotionRules(svg);
-			settle(svg);
+			mark(svg); // (so the parked rule holds every part at rest from this frame on)
 			img.src = base.src;
 			// The base is in memory already: don't let the browser's own lazy-loading distance,
 			// which can be shorter than ours, hold it back.
 			img.loading = "eager";
 			overlays.push(overlay);
-			offscreen.observe(svg);
+			for (const w of overlayWatches) w.observe(svg);
 			reached(img, "insert");
 		} catch (error) {
 			// Anything wrong (missing file, bad markup): keep the still.
@@ -269,21 +273,28 @@
 		}
 	}
 
-	// The files desynchronise their loops with negative delays, which would start every part
-	// mid-cycle the moment it appears. Each cycle starts and ends at rest, so the matching
-	// positive delay holds the part at rest, then joins its loop at exactly the same phase.
-	// Run whenever animations are (re)created: on insertion, motion on, tracking over, play.
-	function settle(svg) {
+	// Mark every animated element, so parking (.sf-paused .sf-a in the CSS) restyles only those:
+	// the crowd has 328 of them among 6900 elements.
+	function mark(svg) {
+		for (const a of svg.getAnimations({ subtree: true })) a.effect.target.classList.add("sf-a");
+	}
+
+	// The files desynchronise their loops with negative delays, the designed steady state: a
+	// loop (re)created out of sight starts mid-cycle, as if it had always been running. Where a
+	// restart is seen, that would make parts jump, so there the loops rest-start: each cycle
+	// starts and ends at rest, and the matching positive delay holds the part at rest, then
+	// joins its loop at exactly the same phase. That is for the glances when cursor tracking
+	// ends, and for drawings that never kick (see start()).
+	function settle(svg, only = null) {
 		const anims = svg.getAnimations({ subtree: true });
-		// When only some loops restart (the glances, after cursor tracking), the ones that kept
-		// running say how far the layer's shared timeline has got, so the restarted ones rejoin
-		// it in step, give or take the frame or two a new animation waits before it starts.
-		// (On insertion, or motion back on, every loop is new and this is 0.)
+		// When only some loops restart (the glances), the ones that kept running say how far the
+		// layer's shared timeline has got, so the restarted ones rejoin it in step, give or take
+		// the frame or two a new animation waits before it starts. (Every loop new: this is 0.)
 		const elapsed = Math.max(0, ...anims.map((a) => a.currentTime ?? 0));
 		// Every timing is read before any is written: each read flushes pending style, so
 		// alternating them recalculated style once per animation (about 5x slower).
 		const fixes = [];
-		for (const a of anims) {
+		for (const a of only || anims) {
 			const { delay } = a.effect.getTiming();
 			const { duration, iterations, direction } = a.effect.getComputedTiming();
 			if (!(delay < 0 && duration > 0 && iterations === Infinity)) continue;
@@ -291,10 +302,67 @@
 			const d = (elapsed - delay) % period;
 			fixes.push([a, d === 0 ? 0 : period - d]);
 		}
-		// Mark every animated element, so parking (.sf-paused .sf-a in the CSS) restyles only
-		// those: the crowd has 328 of them among 6900 elements.
-		for (const a of anims) a.effect.target.classList.add("sf-a");
 		for (const [a, delay] of fixes) a.effect.updateTiming({ delay });
+	}
+
+	// Where a loop's motion starts, as a fraction of its cycle: the last keyframe still at the
+	// rest pose (keyframe 0) before the first that differs, in transform or opacity. Null for
+	// a loop that never holds the rest pose (no two keyframes at rest in a row), such as Nib's
+	// float or a flame: it moves all the time.
+	function motionStart(a) {
+		const keyframes = a.effect.getKeyframes();
+		let start = null;
+		for (const p of ["transform", "opacity"]) {
+			const kfs = keyframes.filter((k) => k[p] !== undefined);
+			const rest = kfs[0]?.[p];
+			if (kfs.length < 2 || kfs.every((k) => k[p] === rest)) continue;
+			if (!kfs.some((k, i) => i && k[p] === rest && kfs[i - 1][p] === rest && k.computedOffset > kfs[i - 1].computedOffset)) return null;
+			let s = 0;
+			for (let i = 1; kfs[i][p] === rest; i++) s = kfs[i].computedOffset;
+			start = start === null ? s : Math.min(start, s);
+		}
+		return start;
+	}
+
+	// Curtain up: every gesture of an overlay in view starts now, instead of wherever its loop
+	// happens to be. Parts that share a duration and a delay make one gesture (Moss's arm, his
+	// trailing hand and his brows), so each such group is shifted as one, keeping the parts in
+	// step: its earliest motion start comes now, or up to KICK_RIPPLE_MS later from left to
+	// right across the drawing. A gesture starts from the rest pose by design, so nothing
+	// jumps. Loops that never hold the rest pose keep their phase: they move anyway. Seen while
+	// it happens (gentle: a still swapped in view, an overlay unparked in view), those
+	// rest-start instead, so that they don't jump either.
+	const KICK_RIPPLE_MS = 150;
+	function kick(svg, gentle = false) {
+		const groups = new Map();
+		for (const a of svg.getAnimations({ subtree: true })) {
+			const { delay } = a.effect.getTiming();
+			const { duration, iterations } = a.effect.getComputedTiming();
+			if (!(duration > 0 && iterations === Infinity)) continue;
+			const key = `${duration} ${delay}`;
+			if (!groups.has(key)) groups.set(key, { duration, anims: [] });
+			groups.get(key).anims.push(a);
+		}
+		// Every read before any write (see settle()).
+		const box = svg.getBoundingClientRect();
+		const shifts = [], loops = [];
+		for (const { duration, anims } of groups.values()) {
+			const starts = anims.map(motionStart);
+			if (starts.includes(null)) {
+				loops.push(...anims);
+				continue;
+			}
+			const x = anims.reduce((sum, a) => { const r = a.effect.target.getBoundingClientRect(); return sum + r.left + r.width / 2; }, 0) / anims.length;
+			const ripple = KICK_RIPPLE_MS * Math.min(1, Math.max(0, (x - box.left) / box.width));
+			shifts.push([anims, Math.min(...starts) * duration - ripple]);
+		}
+		if (gentle) settle(svg, loops);
+		for (const [anims, time] of shifts) {
+			for (const a of anims) {
+				a.effect.updateTiming({ delay: 0 });
+				a.currentTime = time; // (below 0: at rest until then)
+			}
+		}
 	}
 
 	// Eyes follow the cursor. Each .sf-look carries data-look: its largest offset, in its
@@ -311,33 +379,55 @@
 		else if (!reaim) reaim = setTimeout(() => ((reaim = 0), schedule()), lastScroll + CALM_MS - performance.now());
 	};
 
-	// Overlays out of view are parked at once (.sf-paused: their parts rest and run no
-	// animation), so they cost nothing, not even a compositor layer per part. Overlays in view
-	// play, but only once the page is calm: starting one restyles its moving parts, which a
-	// scroll can do without. One that comes into view while the cursor leads gets its eyes aimed.
-	let playing = false;
-	const offscreen = new IntersectionObserver((entries) => {
-		for (const entry of entries) {
-			const o = overlays.find((o) => o.svg === entry.target);
-			o.onScreen = entry.isIntersecting;
-			if (!o.onScreen) o.svg.classList.add("sf-paused");
+	// Overlays away from the screen are parked (.sf-paused: their parts rest and run no
+	// animation at all), so they cost nothing, not even a compositor layer per part. One unparks
+	// as soon as it comes within UNPARK_AHEAD of the screen, mid-scroll or not, so it is already
+	// moving when it appears: its loops come back on their authored phases, mid-rhythm. It parks
+	// again only once it is beyond PARK_BEYOND, so one that hovers near the edge doesn't churn.
+	// Nothing unparks behind the loading screen; its reveal starts what is near (see reveal()).
+	// A drawing marked data-motion-calm (the crowd) unparks only once the page is calm: each of
+	// its 328 moving parts is a compositor layer, and every frame of a scroll past them would
+	// have to draw them all (a fifth of those frames ran late). Overlays in view also get their
+	// eyes aimed, if the cursor leads.
+	const UNPARK_AHEAD = 0.5; // viewports
+	const PARK_BEYOND = 1.5;
+	const parked = (o) => o.svg.classList.contains("sf-paused");
+	const overlayWatch = (viewports, react) =>
+		new IntersectionObserver((entries) => {
+			for (const { target, isIntersecting } of entries) react(overlays.find((o) => o.svg === target), isIntersecting);
+		}, { rootMargin: `${viewports * 100}% 0px` });
+	// (Created in this order, they report in this order: onScreen is current when unparking.)
+	const overlayWatches = [
+		overlayWatch(0, (o, inView) => {
+			o.onScreen = inView;
+			eyesOnScreen = overlays.some((o) => o.onScreen && o.looks.length);
+			schedule();
+		}),
+		overlayWatch(UNPARK_AHEAD, (o, near) => (o.near = near) && unpark(o)),
+		overlayWatch(PARK_BEYOND, (o, near) => near || o.svg.classList.add("sf-paused")),
+	];
+	const calmOnly = (o) => "motionCalm" in o.img.dataset;
+	function unpark(o) {
+		if (loading || !parked(o)) return;
+		if (calmOnly(o) && scrolling()) {
+			if (!o.waiting) {
+				o.waiting = true;
+				whenCalm(() => {
+					o.waiting = false;
+					if (o.near) unpark(o);
+				});
+			}
+			return;
 		}
-		eyesOnScreen = overlays.some((o) => o.onScreen && o.looks.length);
-		if (!playing && !loading) {
-			playing = true;
-			whenCalm(() => {
-				playing = false;
-				play();
-			});
-		}
-		schedule();
-	});
-	// Playing recreates a parked overlay's animations, so they are settled again: from rest.
-	const play = () => {
-		const parked = overlays.filter((o) => o.onScreen && o.svg.classList.contains("sf-paused"));
-		for (const o of parked) o.svg.classList.remove("sf-paused");
-		for (const o of parked) settle(o.svg);
-	};
+		o.svg.classList.remove("sf-paused");
+		// Unparked in view (a still swapped on screen after the loading screen gave up, a jump
+		// past UNPARK_AHEAD in one go): start from rest, nothing jumping.
+		if (o.onScreen) start(o, true);
+	}
+	// Starting an overlay in view: a kick, except for a calm-only drawing, which rest-starts and
+	// so keeps its designed phases: the crowd, whose 5.4 s choreography keeps only a third of
+	// the band moving at any moment (a kick would set the whole band off at once).
+	const start = (o, gentle = false) => (calmOnly(o) ? settle(o.svg) : kick(o.svg, gentle));
 
 	// The rest-pose matrix from an element's user space to its overlay's: each transform
 	// attribute on the way up. CSS animations (a blink's scaleY, a sway) are left out on
@@ -499,7 +589,14 @@
 		refit(); // should the scrollbar's return have moved the layout
 		lift();
 		watch(); // the usual calm-time preparation takes over anything left
-		play(); // overlays in view start, from rest
+		// Curtain up: every overlay near the screen unparks, on its authored phases, and those in
+		// view kick off together (see kick()). The sheet still covers them as they start.
+		for (const o of overlays) {
+			const d = distance(o.img);
+			if (d > UNPARK_AHEAD * innerHeight || !parked(o)) continue;
+			o.svg.classList.remove("sf-paused");
+			if (d === 0 && !calmOnly(o)) kick(o.svg);
+		}
 	}
 
 	// With motion: one last big hop, then the paper lifts away. Without: a short fade.

@@ -128,7 +128,9 @@ big hop, and the sheet lifts away, its inked edge sliding up off the top.
 
 - **What it waits for**, in order: the web fonts; the first screen's images (logo, hero
   letters, hero cast); then every drawing, nearest first. With motion on, that means its
-  motion layer: base decoded, motion file parsed and inlined, parked until it is on screen.
+  motion layer: base decoded, motion file parsed and inlined, parked. At the reveal, every
+  drawing near the screen starts, and those in view all at once (see
+  [When the drawings move](#when-the-drawings-move)).
   The still is skipped, as the base replaces it unseen. With motion off, it means the still.
   The bar shows the share of these steps done, and each heavy step gets a task of its own,
   so the bar keeps moving.
@@ -193,13 +195,40 @@ screen, whenever the page is calm (see [Performance](#performance)). For each on
    image's box snapped to whole device pixels (the way the browser draws the image). An
    image cropped with `object-fit: cover` (the crowd) gets the matching
    `preserveAspectRatio` slice. Both are re-read on resize;
-4. turns each loop's negative `animation-delay` into the equivalent positive one, so every
-   part starts at rest and joins its loop in phase, one by one, instead of jumping;
+4. inserts it parked (`.sf-paused`): every animated part (marked `.sf-a`) at rest and running
+   no animation, so base plus overlay is exactly the still;
 5. swaps the image to `x-base.svg` in the same step, so the switch is invisible.
 
 If anything fails, the still stays. Turning motion off just stops the animations
 (`html.motion-off`): every part returns to its rest pose, which with the base is the still.
-Turning it back on starts every part from rest again, the same way.
+
+### When the drawings move
+
+- **Parked and unparked.** An overlay away from the screen is parked: its parts rest and run
+  no animation at all. (Paused instead, every animated part would keep a compositor layer of
+  its own, about 800 for the seven drawings.) It unparks as soon as it comes within half a
+  viewport of the screen, mid-scroll or not, and parks again only once it is a viewport and a
+  half away, so a drawing near the edge doesn't churn. Unparked out of sight, its loops come
+  back on their authored phases (the files desynchronise them with negative
+  `animation-delay`s), so the drawing is already mid-rhythm when it appears.
+- **Curtain up.** When the loading screen lifts, and when motion is turned back on, every
+  drawing in view starts at once. Each gesture is shifted so that its motion begins within
+  the next 0.3 s, in a quick ripple from left to right across the drawing. The parts of one
+  gesture share a duration and a delay (Moss's arm, his trailing hand and his brows), so each
+  such group moves as one and keeps its parts in step. Its motion begins where its keyframes
+  first leave the rest pose of keyframe 0, so nothing jumps. Loops that never hold the rest
+  pose (Nib's float, a flame) keep their phase: they move anyway.
+- **Starting in view.** A drawing that starts while in view at any other moment (a still
+  swapped on screen after the loading screen gave up, or a jump past the half-viewport
+  margin in one go) is kicked the same way, except that its continuous loops hold at rest
+  until their loop comes round, so that nothing jumps. The glances that restart after cursor
+  tracking also hold, then rejoin their drawing in step.
+- **The crowd** (`data-motion-calm` on its image) unparks only once the page is calm, and
+  never kicks. Each of its 328 moving parts is a compositor layer, and every frame of a
+  scroll past them would have to draw them all: about a fifth of those frames ran late. Its
+  5.4 s choreography keeps only a third of the band moving at any moment, so it always runs
+  on its designed phases: mid-rhythm if it starts out of sight, holding at rest until each
+  loop comes round if it starts in view.
 
 ### Eyes that follow the cursor
 
@@ -234,6 +263,9 @@ script touches nothing else.
 - An element animated by CSS carries no `transform` attribute; pivot with a
   `translate(px py)` wrapper and `transform-origin: 0 0`.
 - Ids can be anything; the page prefixes them.
+- Give the parts of one gesture the same duration and delay: the page starts them together
+  (see [When the drawings move](#when-the-drawings-move)). A gesture holds the rest pose of
+  keyframe 0 before it moves, or after; a loop that never holds it counts as continuous.
 - Write every shape the still also draws with the same element and attribute values, in the
   same local coordinates, under the same ink and halo filters. The bake moves identical path
   data identically, which keeps base plus motion at rest equal to the still.
@@ -267,13 +299,14 @@ each frame to what is on screen.
   nearest drawings first: the still of every drawing within 3 viewports of the screen, so no
   still is decoded in the middle of a scroll, and the motion layer of every drawing within
   1.5 viewports, so the next ones already move when they arrive.
-- **Offscreen parking.** An overlay is parked as soon as it leaves the screen: its parts go
-  back to rest and run no animation at all. (Merely pausing them would not do: Chrome gives
-  every part with a transform animation, even a paused one, a compositor layer of its own,
-  and with all seven overlays in, that made about 800 layers to draw in every scrolled
-  frame; parked, there are about 115.) It plays again, from rest, once it is back on screen
-  and the page is calm. Parking restyles only its animated elements (`.sf-a`, marked by the
-  script), not the thousands of shapes around them.
+- **Offscreen parking.** An overlay more than a viewport and a half from the screen is
+  parked: its parts rest and run no animation at all. (Merely pausing them would not do:
+  Chrome gives every part with a transform animation, even a paused one, a compositor layer
+  of its own, and with all seven overlays in, that made about 800 layers to draw in every
+  scrolled frame; parked, there are about 115.) It unparks half a viewport ahead of the
+  screen, even mid-scroll, so it is already moving when it appears. Parking and unparking
+  restyle only its animated elements (`.sf-a`, marked by the script), not the thousands of
+  shapes around them.
 - **Cheap frames.** Each overlay is its own compositor layer with `contain: strict`. The
   script never reads layout after writing it: it reads every animation's timing before
   changing any, reads every overlay's box before refitting any, and keeps each eye's rest
@@ -310,12 +343,19 @@ stills nearest the first screen by itself before `motion.js` runs (0.3 MB on des
 This is more up front than before, by design. Before the loading screen, the page painted at
 0.5 to 0.7 s and loaded lazily: 2.1 to 2.5 MB in all, with motion fetched only near where the
 visitor paused. Now the visitor waits a moment longer, and every drawing's motion is loaded
-even if they never scroll to it. In exchange nothing is left to do once the page shows. In
-a scroll-through of the whole page right after the reveal (20 px per frame, median of 3
-runs), no frame ran over 20 ms at either size (0.4% on desktop before), nor after 3 s at the
-hero or with the mouse moving, and the renderer used about 40% less CPU while scrolling. The
+even if they never scroll to it. In exchange nothing is left to do once the page shows. The
 one-off work now happens behind the screen, whose own animation runs on the compositor:
 334 ms of long tasks in the first 6 s on desktop (56 ms before) and 217 ms on phone (52 ms).
+
+Since the drawings unpark half a viewport ahead, they also animate while the page scrolls,
+which costs the renderer about three times the CPU during a scroll (550 ms per second rather
+than 190 on desktop) and twice as much at rest near the bottom of the page. Scrolling stays
+smooth: in a scroll-through of the whole page right after the reveal (20 px per frame,
+median of 3 runs), no frame ran over 20 ms at either size, nor after 3 s at the hero, and
+0.4% did with the mouse moving (0.7% before). Letting the crowd unpark mid-scroll too made
+14% of the frames on desktop run late (a fifth of those with the crowd on screen), hence its
+calm-only start. A stricter test, Chrome's own synthetic scroll gesture measured on the
+compositor, drops about 5% of frames, around the moments a drawing unparks (none before).
 
 ## Originality
 
