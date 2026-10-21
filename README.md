@@ -6,17 +6,19 @@ black-and-white, hand-inked comic-book style: ink (`#111111`) on paper (`#ffffff
 halftone dot shading and chunky lettering.
 
 There is no build step and no JavaScript library. The page is plain HTML and CSS, with
-one short inline script that opens and closes the phone menu and one small script,
-`motion.js`, that brings the drawings to life (see [Motion](#motion)). The fonts (Outfit
-and Lora) come from Google Fonts, and the page falls back to system fonts without them.
+one short inline script that puts up the loading screen and opens and closes the phone menu,
+and one small script, `motion.js`, that gets the page ready behind the loading screen and
+brings the drawings to life (see [Loading screen](#loading-screen) and [Motion](#motion)).
+The fonts (Outfit and Lora) come from Google Fonts, and the page falls back to system fonts
+without them.
 
 ## Files
 
 | Path | What it is |
 | --- | --- |
-| `index.html` | The page: header, hero, about band, universe, crowd band, together, join, footer |
+| `index.html` | The page: loading screen, header, hero, about band, universe, crowd band, together, join, footer |
 | `styles.css` | All styles: design tokens, layout, the CSS halftone band, breakpoints at 1024px and 760px |
-| `motion.js` | The motion layer: inlines the animated parts over the drawings, the pause toggle, eyes that follow the cursor |
+| `motion.js` | The motion layer: inlines the animated parts over the drawings, the pause toggle, eyes that follow the cursor; and the loading screen's logic |
 | `assets/logo-mark.svg` | The logo mark and favicon: a face peeking over an open book |
 | `assets/hero-letters.svg` | Hero layer 1 (1600x900): the hand-lettered STORY / FOLK wordmark |
 | `assets/hero-cast.svg` | Hero layer 2 (1600x900): the cast perched on the letters, stacked exactly over layer 1 |
@@ -32,7 +34,8 @@ and Lora) come from Google Fonts, and the page falls back to system fonts withou
 | `tools/bake.mjs` | Bakes the ink wobble and the white halos into plain geometry, so no SVG filter runs at draw time |
 
 Every `<img>` carries its width and height, so the layout holds its shape while the
-drawings load. Drawings below the first screen load lazily (see [Performance](#performance)).
+drawings load. In the HTML the drawings below the first screen load lazily; with JavaScript
+the loading screen prepares them all up front (see [Loading screen](#loading-screen)).
 
 ## Preview
 
@@ -115,6 +118,41 @@ passes through unchanged), so `node tools/bake.mjs --in-place assets/*.svg` is a
   and reused with `<use>` (ids `bk1`, `bk2`…). Unused filters are removed and any other
   filter is reported and kept.
 
+## Loading screen
+
+With JavaScript, the page opens on a loading screen. Nib, the ink drop of the cast, bounces
+on a hand-inked line: his halftone shadow shrinks as he rises, and ink drops flick off at
+every landing. Under him are the wordmark, "Inking the pages…" and a hand-drawn ink bar
+with a percentage. Behind the screen the page gets everything ready. Then Nib makes one last
+big hop, and the sheet lifts away, its inked edge sliding up off the top.
+
+- **What it waits for**, in order: the web fonts; the first screen's images (logo, hero
+  letters, hero cast); then every drawing, nearest first. With motion on, that means its
+  motion layer: base decoded, motion file parsed and inlined, parked until it is on screen.
+  The still is skipped, as the base replaces it unseen. With motion off, it means the still.
+  The bar shows the share of these steps done, and each heavy step gets a task of its own,
+  so the bar keeps moving.
+- **Timing.** The screen stays at least 1 s from the start of navigation, so it never just
+  flashes, and at most 10 s. After that the page shows anyway, and the calm-time preparation
+  finishes the rest (see [Performance](#performance)). Should `motion.js` never run, the
+  inline script in `<head>` takes the screen down after 12 s.
+- **While it shows,** scrolling is locked, the page behind is `inert` and
+  `aria-busy="true"`, and the screen is a `role="status"` reading "Loading Storyfolk" (the
+  percentage is hidden from screen readers). All of it is undone at the reveal. After a
+  reload mid-page, the page is revealed where it was.
+- **Motion.** Every animation on the screen moves only `transform` and `opacity`, of HTML
+  elements or of whole `<svg>` elements (never of shapes inside one), so the compositor
+  keeps it smooth while the main thread prepares the page. With motion off (reduced motion,
+  or the toggle saved off), Nib stands still and the screen fades out in 0.28 s.
+- **Without JavaScript** there is no loading screen: the page shows at once, with its
+  stills, as before.
+
+The markup is at the top of `<body>` (`.loader`), the styles are section 10 of `styles.css`
+and the logic is the last section of `motion.js`. This Nib is a compact inline SVG (2 KB)
+drawn for the screen after the Nib of the hero (`nib()` in `tools/generate-hero-cast.py`):
+the same teardrop of ink with its white highlight, pen-nib tuft with slit and breather hole,
+big eyes and halftone cheeks, here with both arms up.
+
 ## Motion
 
 The characters blink, look around, wave, sway and bob. Seven drawings are animated:
@@ -124,7 +162,7 @@ The characters blink, look around, wave, sway and bob. Seven drawings are animat
 
 | File | What it holds |
 | --- | --- |
-| `x.svg` | The complete still. Shown without JavaScript, with motion off or reduced, and while the page loads. |
+| `x.svg` | The complete still. Shown without JavaScript, with motion off or reduced, and until the motion layer is in, should the page show first. |
 | `x-base.svg` | The still minus every moving part, with whatever a moving part reveals drawn in (the body behind a waving arm, the skin under the eyes). |
 | `x-motion.svg` | Only the moving parts, on a transparent canvas of the same size, animated by its own internal `<style>`. |
 
@@ -142,9 +180,10 @@ shared 5.4 s clock, so only part of it repaints at a time.
 
 The HTML carries only the stills. Each animated `<img>` names its motion files in
 `data-motion-base` and `data-motion` and sits in a positioned `.sf-frame` that takes its
-layout box. When motion is on, `motion.js` waits for the page to load, then upgrades the
-hero at once and every other drawing as its frame comes near the screen, whenever the page
-is calm (see [Performance](#performance)). For each one it:
+layout box. When motion is on, `motion.js` upgrades every drawing behind the loading
+screen, nearest first (see [Loading screen](#loading-screen)). Any drawing still waiting
+when the screen lifts (it gives up after 10 s) is upgraded as its frame comes near the
+screen, whenever the page is calm (see [Performance](#performance)). For each one it:
 
 1. fetches `x-motion.svg` and preloads and decodes `x-base.svg`, in parallel;
 2. prefixes every id in the motion file (`id`, `url(#…)`, `href` and `xlink:href`), so the
@@ -181,8 +220,10 @@ script touches nothing else.
   and starts all animation on the page (WCAG 2.2.2), and remembers the choice in
   `localStorage` (`sf-motion` = `on` or `off`). A saved choice wins over the system setting.
   The button appears only when the script runs.
-- Drawings scrolled out of view pause, so they cost nothing.
+- Drawings scrolled out of view stop moving, so they cost nothing.
 - Touch screens get the idle animation but no eye tracking.
+- The loading screen follows the same choice: with motion off, Nib stands still and the
+  screen fades instead of lifting.
 
 ### Writing a motion file
 
@@ -201,27 +242,38 @@ script touches nothing else.
 ## Performance
 
 Most of the page's weight and work is in the drawings: eight large SVG stills and seven
-motion layers that repaint while they animate. The page keeps that cost to what is on screen,
-and keeps every one-off cost out of scrolling.
+motion layers that repaint while they animate. With JavaScript, the page does all of its
+one-off work up front, behind the loading screen, so that once it shows there is nothing
+left to load, parse or insert while the visitor scrolls. From then on it keeps the cost of
+each frame to what is on screen.
 
-- **Lazy loading.** Only the first screen loads eagerly: the logo, the hero letters
-  (`fetchpriority="high"`; they are the largest paint) and the hero cast. Every drawing
-  below has `loading="lazy"` and `decoding="async"`, and every `<img>` keeps its `width`
-  and `height`, so nothing shifts as they arrive.
-- **Nothing heavy while scrolling.** Each one-off step of a drawing (loading its still,
-  loading its base and motion file, parsing the motion file, inserting it) waits until the
-  page is calm: no scroll for 200 ms, and the browser idle (`requestIdleCallback`; just after
-  a frame in Safari). The steps take turns, one per frame. The still shows until the swap, so
-  waiting costs nothing visible: motion just starts a moment after the scroll stops.
-- **Looking ahead.** Whenever the page is calm, `motion.js` prepares the nearest drawings
-  first. It loads and decodes the still of every drawing within 3 viewports of the screen, so
-  no still is decoded in the middle of a scroll, and upgrades every drawing within 1.5
-  viewports, so the next ones already move when they arrive. The hero upgrades as soon as
-  the page has loaded. Nothing further away is fetched, and nothing for motion while motion
-  is off.
-- **Offscreen pausing.** An overlay pauses as soon as it leaves the screen, and plays again
-  once it is back on screen and the page is calm. Pausing restyles only its animated elements
-  (`.sf-a`, marked by the script), not the thousands of shapes around them.
+- **Up front, behind the loading screen.** Once the fonts and the first screen are in,
+  `motion.js` asks for every motion file at once, nearest drawing first, so the network
+  stays busy while the main thread parses and inlines them one by one. Nobody can see or
+  scroll the page meanwhile, so these steps skip the calm-time waiting below, but each still
+  gets a task of its own, which keeps the bar moving (see [Loading screen](#loading-screen)).
+- **Lazy loading in the HTML.** Only the first screen loads eagerly: the logo, the hero
+  letters (`fetchpriority="high"`; they are the largest paint) and the hero cast. Every
+  drawing below has `loading="lazy"` and `decoding="async"`, and every `<img>` keeps its
+  `width` and `height`, so nothing shifts as they arrive. This is the page a visitor without
+  JavaScript gets.
+- **Nothing heavy while scrolling.** Should the loading screen lift before everything is
+  ready (its 10 s maximum), or motion be switched on later, each remaining one-off step of a
+  drawing (loading its still, loading its base and motion file, parsing the motion file,
+  inserting it) waits until the page is calm: no scroll for 200 ms, and the browser idle
+  (`requestIdleCallback`; just after a frame in Safari). The steps take turns, one per
+  frame. The still shows until the swap, so waiting costs nothing visible.
+- **Looking ahead.** In that case, whenever the page is calm, `motion.js` prepares the
+  nearest drawings first: the still of every drawing within 3 viewports of the screen, so no
+  still is decoded in the middle of a scroll, and the motion layer of every drawing within
+  1.5 viewports, so the next ones already move when they arrive.
+- **Offscreen parking.** An overlay is parked as soon as it leaves the screen: its parts go
+  back to rest and run no animation at all. (Merely pausing them would not do: Chrome gives
+  every part with a transform animation, even a paused one, a compositor layer of its own,
+  and with all seven overlays in, that made about 800 layers to draw in every scrolled
+  frame; parked, there are about 115.) It plays again, from rest, once it is back on screen
+  and the page is calm. Parking restyles only its animated elements (`.sf-a`, marked by the
+  script), not the thousands of shapes around them.
 - **Cheap frames.** Each overlay is its own compositor layer with `contain: strict`. The
   script never reads layout after writing it: it reads every animation's timing before
   changing any, reads every overlay's box before refitting any, and keeps each eye's rest
@@ -232,23 +284,38 @@ and keeps every one-off cost out of scrolling.
   and filters were the main cost of every repaint and every tile rastered while scrolling.
   Filters are baked into the geometry by `tools/bake.mjs`, so none runs at draw time.
 
-Measured in headless Chromium (no GPU), cold load with the cache disabled, median of 3 runs,
-on the page before this work (every drawing and motion layer loaded up front) and now:
+Time to reveal, from the start of navigation until the screen starts to lift (normally with
+every drawing ready), measured in headless Chromium (no GPU), median of 3 cold loads. The
+first two columns are with the cache disabled and the files as the test server
+(`http-server`) sends them, uncompressed. The last two are the same files gzipped, as static
+hosts serve SVG (about a quarter of the size), on a first visit with an empty cache.
 
-| | Desktop 1440x900 @2x | Phone 390x844 @3x |
-| --- | --- | --- |
-| Bytes in the first 5 s | 4775 KB -> 2242 KB | 4775 KB -> 2520 KB |
-| Requests in the first 5 s | 38 -> 23 | 38 -> 24 |
-| Long-task time in the first 6 s | 381 ms -> 51 ms | 191 ms -> 53 ms |
-| Main thread busy in the first 6 s | 1670 ms -> 739 ms | 1429 ms -> 753 ms |
-| Scroll-through, frames over 20 ms | 0.4% -> 0% | 0% -> 0% |
+| Network | Desktop 1440x900 @2x | Phone 390x844 @3x | Desktop, gzipped | Phone, gzipped |
+| --- | --- | --- | --- | --- |
+| No throttling | 1.6 s | 1.4 s | 1.5 s | 1.3 s |
+| Fast 4G (9 Mbps, 60 ms RTT) | 3.5 s | 3.8 s | 1.8 s | 1.8 s |
+| Slow 4G (1.6 Mbps, 150 ms RTT) | 10.0 s (the maximum) | 10.0 s (the maximum) | 4.6 s | 5.0 s |
+| Received by the reveal, Fast 4G | 3.0 MB | 3.5 MB | 0.6 MB | 0.7 MB |
 
-Loading the drawings lazily first moved their one-off work into the first scroll: the page
-loaded 1441 KB (desktop) and 2238 KB (phone) in its first 5 s, but 5.1% and 3.7% of the frames
-of a scroll-through ran over 20 ms (5.8% and 3.7% after 3 s at the hero). Preparing drawings
-ahead, and only while the page is calm, brought all four back to 0%, for the extra bytes
-above. A drawing a visitor scrolls past without stopping keeps its still; motion is fetched
-only near where they pause. Byte counts are uncompressed, as the test server sent them.
+Uncompressed, Slow 4G cannot bring in the 2.3 MB of drawings within 10 s, so the screen
+lifts at its maximum with three or four of the seven drawings ready, and the calm-time
+preparation brings in the rest. The byte counts include two costs that are not the page's
+own: with the cache disabled each base is downloaded a second time when the image swaps to
+it (about 1 MB; a normal visit takes it from memory), and the browser starts loading the
+stills nearest the first screen by itself before `motion.js` runs (0.3 MB on desktop,
+0.8 MB on phone). With motion off the screen waits for the stills only: it lifts at its
+1 s minimum unthrottled, at about 2.1 s on Fast 4G and at 9.4 to 9.5 s on Slow 4G
+(uncompressed).
+
+This is more up front than before, by design. Before the loading screen, the page painted at
+0.5 to 0.7 s and loaded lazily: 2.1 to 2.5 MB in all, with motion fetched only near where the
+visitor paused. Now the visitor waits a moment longer, and every drawing's motion is loaded
+even if they never scroll to it. In exchange nothing is left to do once the page shows. In
+a scroll-through of the whole page right after the reveal (20 px per frame, median of 3
+runs), no frame ran over 20 ms at either size (0.4% on desktop before), nor after 3 s at the
+hero or with the mouse moving, and the renderer used about 40% less CPU while scrolling. The
+one-off work now happens behind the screen, whose own animation runs on the compositor:
+334 ms of long tasks in the first 6 s on desktop (56 ms before) and 217 ms on phone (52 ms).
 
 ## Originality
 

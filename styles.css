@@ -707,10 +707,13 @@ html.motion-off .sf-motion * {
 	animation: none !important;
 }
 
-/* Offscreen overlays hold their pose and stop repainting. motion.js marks every animated */
-/* element .sf-a, so pausing or playing restyles only those, not the whole drawing. */
+/* Offscreen overlays are parked: their parts go back to rest and run no animation at all. */
+/* (A paused animation would not do: Chrome gives every part with a transform animation, */
+/* even a paused one, a compositor layer of its own, and the seven overlays hold about 700 */
+/* such parts, which every scrolled frame would have to draw.) motion.js marks every */
+/* animated element .sf-a, so parking or playing restyles only those, not the whole drawing. */
 .sf-motion.sf-paused .sf-a {
-	animation-play-state: paused !important;
+	animation: none !important;
 }
 
 /* Eyes that follow the cursor: motion.js moves each .sf-look and the idle glance */
@@ -725,6 +728,295 @@ html.motion-off .sf-motion * {
 
 html.motion-off .sf-motion .sf-look {
 	transition: none;
+}
+
+/* 10. Loading screen (see motion.js) */
+
+/* Only with JS: the head script adds .js and .is-loading before the first paint, and */
+/* motion.js lifts the screen once the page is ready. Without JS the page simply appears. */
+/* Every animation here moves only transform and opacity, of HTML elements or whole <svg> */
+/* elements, so the compositor runs it smoothly while the main thread prepares the page. */
+html.is-loading {
+	overflow: hidden;
+	/* Where scrollbars take space, keep it while scrolling is locked, so the page doesn't */
+	/* shift sideways when the scrollbar comes back at the reveal. */
+	scrollbar-gutter: stable;
+}
+
+.loader {
+	display: none;
+}
+
+.js .loader {
+	position: fixed;
+	inset: 0;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding:
+		max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+		max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+	background: var(--paper);
+	color: var(--ink);
+	text-align: center;
+}
+
+/* The sheet's lower edge, hand-inked, waits just below the screen and shows as it lifts. */
+.js .loader::after {
+	content: "";
+	position: absolute;
+	top: calc(100% - 1px);
+	left: 0;
+	width: 100%;
+	height: 28px;
+	background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 18'%3E%3Cpath d='M0 9C20 6 38 12 60 10S100 6 122 9 160 13 182 10 220 12 240 9V0H0Z' fill='%23fff'/%3E%3Cpath d='M0 9C20 6 38 12 60 10S100 6 122 9 160 13 182 10 220 12 240 9' fill='none' stroke='%23111' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E") 0 0 / 240px 18px repeat-x,
+		radial-gradient(circle, var(--dot) 1.1px, transparent 1.5px) 0 15px / 6px 6px repeat-x,
+		radial-gradient(circle, var(--dot) 0.7px, transparent 1.1px) 3px 21px / 6px 6px repeat-x;
+}
+
+/* Nib bounces on a hand-inked ground line, its halftone shadow breathing with the bounce */
+/* and ink drops popping at each landing. All four share one 0.92 s beat. */
+.loader-scene {
+	position: relative;
+	width: 200px;
+	height: 214px;
+	flex: none;
+}
+
+.loader-ground {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 100%;
+	height: auto;
+}
+
+.loader-shadow {
+	position: absolute;
+	left: 50%;
+	bottom: 0;
+	width: 100px;
+	height: auto;
+	margin-left: -50px;
+	animation: loader-shadow 0.92s infinite;
+	will-change: transform;
+}
+
+.loader-nib {
+	position: absolute;
+	left: 50%;
+	bottom: 2px;
+	width: 112px;
+	height: auto;
+	margin-left: -56px;
+	transform-origin: 50% 96%;
+	animation: loader-bounce 0.92s infinite;
+	will-change: transform;
+}
+
+.loader-drop {
+	position: absolute;
+	left: 50%;
+	bottom: 4px;
+	width: 13px;
+	height: auto;
+	margin-left: -6.5px;
+	opacity: 0;
+	animation: loader-pop 0.92s infinite;
+	will-change: transform, opacity;
+}
+
+/* Each drop flies from beside Nib's base, tipped the way it flies. */
+.loader-drop-1 {
+	--from: translate(-26px, 0) rotate(-58deg) scale(0.55);
+	--to: translate(-64px, -30px) rotate(-58deg);
+}
+
+.loader-drop-2 {
+	--from: translate(24px, -2px) rotate(52deg) scale(0.55);
+	--to: translate(58px, -38px) rotate(52deg);
+}
+
+.loader-drop-3 {
+	--from: translate(30px, 0) rotate(80deg) scale(0.4);
+	--to: translate(80px, -12px) rotate(80deg) scale(0.75);
+}
+
+@keyframes loader-bounce {
+	0% {
+		transform: translateY(0) scale(1.15, 0.83);
+		animation-timing-function: cubic-bezier(0.3, 0.6, 0.5, 1);
+	}
+	9% {
+		transform: translateY(-6px) scale(0.93, 1.09);
+		animation-timing-function: cubic-bezier(0.25, 0.7, 0.45, 1);
+	}
+	46% {
+		transform: translateY(-74px) scale(1.01, 0.99);
+		animation-timing-function: linear;
+	}
+	54% {
+		transform: translateY(-72px) scale(1, 1);
+		animation-timing-function: cubic-bezier(0.55, 0, 0.8, 0.45);
+	}
+	91% {
+		transform: translateY(-5px) scale(0.92, 1.1);
+		animation-timing-function: cubic-bezier(0.3, 0, 0.7, 1);
+	}
+	100% {
+		transform: translateY(0) scale(1.15, 0.83);
+	}
+}
+
+@keyframes loader-shadow {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1.12, 1);
+	}
+	46%,
+	54% {
+		opacity: 0.4;
+		transform: scale(0.5, 0.8);
+	}
+}
+
+@keyframes loader-pop {
+	0% {
+		opacity: 1;
+		transform: var(--from);
+		animation-timing-function: cubic-bezier(0.2, 0.6, 0.4, 1);
+	}
+	16% {
+		opacity: 1;
+	}
+	34%,
+	100% {
+		opacity: 0;
+		transform: var(--to);
+	}
+}
+
+/* The page is ready: one last big hop (motion.js animates Nib and his shadow from wherever */
+/* they are), then the paper lifts away and is removed. */
+.loader.is-done,
+.loader.is-leaving {
+	pointer-events: none;
+}
+
+.loader.is-done .loader-nib,
+.loader.is-done .loader-shadow {
+	animation: none;
+}
+
+.loader.is-done .loader-drop {
+	animation-iteration-count: 1;
+}
+
+.loader.is-leaving {
+	transform: translateY(-100%);
+	transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+	will-change: transform;
+}
+
+/* Without motion (reduced motion, or the toggle saved off), Nib just stands there, and */
+/* the screen fades out instead of lifting. */
+html.motion-off .loader-nib,
+html.motion-off .loader-shadow,
+html.motion-off .loader-drop {
+	animation: none;
+}
+
+html.motion-off .loader.is-leaving {
+	opacity: 0;
+	transform: none;
+	transition: opacity 0.28s ease;
+}
+
+.loader-brand {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 9px;
+	margin-top: 26px;
+	font-family: var(--font-display);
+	font-size: 30px;
+	font-weight: 800;
+	line-height: 1;
+	letter-spacing: -0.02em;
+}
+
+.loader-brand img {
+	width: 38px;
+	height: 38px;
+}
+
+.loader-caption {
+	margin-top: 10px;
+	color: var(--ink-soft);
+	font-size: 17px;
+	font-style: italic;
+}
+
+.loader-progress {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 18px;
+	/* Centre the bar itself: the percentage hangs to its right. */
+	padding-left: calc(10px + 3.4em);
+	font-size: 13px;
+}
+
+.loader-bar {
+	position: relative;
+	width: clamp(180px, 56vw, 240px);
+	height: 16px;
+}
+
+.loader-track,
+.loader-fill {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.loader-fill {
+	transform: scaleX(0);
+	transform-origin: 0 50%;
+	transition: transform 0.45s cubic-bezier(0.3, 0.7, 0.4, 1);
+	will-change: transform;
+}
+
+.loader-pct {
+	min-width: 3.4em;
+	font-family: var(--font-display);
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	text-align: left;
+}
+
+/* Big screens: a bigger Nib. */
+@media (min-width: 900px) and (min-height: 700px) {
+	.loader-scene {
+		transform: scale(1.3);
+		margin-block: 32px;
+	}
+}
+
+/* Short screens (a phone on its side): a smaller bounce scene. */
+@media (max-height: 520px) {
+	.loader-scene {
+		transform: scale(0.72);
+		margin-block: -30px;
+	}
+
+	.loader-brand {
+		margin-top: 10px;
+	}
 }
 
 /* Breakpoint: tablet */

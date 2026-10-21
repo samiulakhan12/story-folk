@@ -13,6 +13,9 @@
 // calm (no scroll for CALM_MS, and the browser idle): first the still, then, with motion
 // on, the motion layer. Each heavy step (loading, parsing, inserting) gets a turn of its
 // own, one per frame. The still shows until the swap, so waiting costs nothing visible.
+//
+// With JS the page opens behind a loading screen (the last section below), and all of that
+// preparation happens there, up front: every drawing, nearest first, before the reveal.
 (() => {
 	"use strict";
 
@@ -36,6 +39,9 @@
 	const near = new Set(); // ...those of them within STILL_AHEAD of the screen
 	const close = new Set(); // ...and within MOTION_AHEAD
 	const asked = new Set(); // drawings whose still has been asked for
+	// The loading screen, up from the first paint (the head script set .is-loading).
+	const loader = document.querySelector(".loader");
+	let loading = !!loader && root.classList.contains("is-loading");
 
 	// A stored "on" or "off" wins; without one, follow the system setting.
 	// Storage can throw (private windows, blocked cookies), so every access is guarded.
@@ -69,9 +75,11 @@
 	}
 
 	// Each heavy step waits for a turn: a frame, then calm. One step per turn, so two big SVGs
-	// are never parsed or inserted in the same frame, and none of it lands in a scroll.
+	// are never parsed or inserted in the same frame, and none of it lands in a scroll. Behind
+	// the loading screen nobody can scroll or see the page, and the screen's own animation
+	// runs off the main thread, so there a turn is just a new task (the bar still updates).
 	let turns = Promise.resolve();
-	const turn = () => (turns = turns.then(() => new Promise((go) => requestAnimationFrame(() => whenCalm(go)))));
+	const turn = () => (turns = turns.then(() => new Promise((go) => (loading ? setTimeout(go, 0) : requestAnimationFrame(() => whenCalm(go))))));
 
 	// Which drawings to prepare. Watching starts once the page's own images and fonts have
 	// loaded, so motion never delays them. The drawing in the first screen is always wanted;
@@ -87,7 +95,7 @@
 	const watchers = [watcher(near, STILL_AHEAD), watcher(close, MOTION_AHEAD)];
 
 	function watch() {
-		if (!loaded) return;
+		if (!loaded || loading) return; // the loading screen prepares everything itself
 		for (const w of watchers) {
 			for (const img of pending) {
 				w.unobserve(img); // observing again reports where it is now
@@ -103,11 +111,13 @@
 	}
 
 	// One drawing at a time, nearest first, while any is left to prepare: a still to load
-	// (with motion on or off), or, with motion on and within MOTION_AHEAD, an upgrade. A
-	// drawing whose files are slow to arrive gets a few seconds, then keeps loading on its
-	// own while the next one starts.
-	const stillDue = (img) => !asked.has(img) && !img.complete;
-	const upgradeDue = (img) => on && pending.has(img) && close.has(img);
+	// (with motion on or off), or, with motion on and within MOTION_AHEAD (anywhere, behind
+	// the loading screen), an upgrade. A drawing whose files are slow to arrive gets a few
+	// seconds, then keeps loading on its own while the next one starts.
+	// Behind the loading screen with motion on, the still is skipped: the base and the motion
+	// layer replace it before anyone could see it.
+	const stillDue = (img) => !asked.has(img) && !img.complete && !(loading && on);
+	const upgradeDue = (img) => on && pending.has(img) && (loading || close.has(img));
 	const atMost = (promise, ms) => Promise.race([promise, new Promise((done) => setTimeout(done, ms))]);
 	let working = false;
 	async function work() {
@@ -124,13 +134,16 @@
 
 	// The nearest drawing with something due. A turn starts just after a frame, so these
 	// layout reads are cheap.
+	const distance = (img) => {
+		const r = img.getBoundingClientRect();
+		return Math.max(0, r.top - innerHeight, -r.bottom);
+	};
 	function nearest() {
-		let best = null, distance = Infinity;
-		for (const img of new Set([...near, ...close])) {
+		let best = null, least = Infinity;
+		for (const img of loading ? images : new Set([...near, ...close])) {
 			if (!stillDue(img) && !upgradeDue(img)) continue;
-			const r = img.getBoundingClientRect();
-			const d = Math.max(0, r.top - innerHeight, -r.bottom);
-			if (d < distance) [best, distance] = [img, d];
+			const d = distance(img);
+			if (d < least) [best, least] = [img, d];
 		}
 		return best;
 	}
@@ -142,9 +155,9 @@
 			asked.add(img);
 			img.loading = "eager";
 			await img.decode().catch(() => {});
-			if (!upgradeDue(img)) return;
-			await turn();
+			if (upgradeDue(img)) await turn();
 		}
+		reached(img, "still");
 		if (upgradeDue(img)) await upgrade(img);
 	}
 
@@ -187,6 +200,18 @@
 		});
 	}
 
+	// A drawing's motion files, asked for once: the motion layer's text and the base, decoded.
+	const files = new Map();
+	function filesOf(img) {
+		if (!files.has(img)) {
+			const base = new Image();
+			base.src = img.dataset.motionBase;
+			const text = fetch(img.dataset.motion).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status} ${r.url}`))));
+			files.set(img, Promise.all([text, base.decode().then(() => base)]));
+		}
+		return files.get(img);
+	}
+
 	async function upgrade(img) {
 		pending.delete(img);
 		near.delete(img);
@@ -194,18 +219,17 @@
 		for (const w of watchers) w.unobserve(img);
 		let svg = null;
 		try {
-			const base = new Image();
-			base.src = img.dataset.motionBase;
-			const load = fetch(img.dataset.motion).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status} ${r.url}`))));
-			const [text] = await Promise.all([load, base.decode()]);
+			const [text, base] = await filesOf(img);
+			reached(img, "files");
 			const name = img.dataset.motion.replace(/^.*\//, "").replace(/(-motion)?\.svg$/, "");
 			await turn();
 			const doc = new DOMParser().parseFromString(prefixIds(text, `sf-${name}-`), "image/svg+xml");
 			if (doc.documentElement.localName !== "svg" || doc.querySelector("parsererror")) throw new Error(`bad SVG in ${img.dataset.motion}`);
+			reached(img, "parse");
 			await turn();
 			// Adopted, not imported: the parsed tree moves into the page instead of being copied.
 			svg = document.adoptNode(doc.documentElement);
-			// It starts paused; the offscreen observer below plays it once it is in view.
+			// It starts parked (see the offscreen observer below), until it is in view.
 			svg.classList.add("sf-motion", "sf-paused");
 			svg.setAttribute("aria-hidden", "true");
 			svg.setAttribute("focusable", "false");
@@ -225,10 +249,13 @@
 			img.loading = "eager";
 			overlays.push(overlay);
 			offscreen.observe(svg);
+			reached(img, "insert");
 		} catch (error) {
 			// Anything wrong (missing file, bad markup): keep the still.
 			if (svg) svg.remove();
+			img.loading = "eager"; // (skipped behind the loading screen, so it may not be in yet)
 			console.warn("Storyfolk motion: keeping the still image.", error);
+			for (const step of ["files", "parse", "insert"]) reached(img, step); // the loader stops waiting
 		}
 	}
 
@@ -245,7 +272,7 @@
 	// The files desynchronise their loops with negative delays, which would start every part
 	// mid-cycle the moment it appears. Each cycle starts and ends at rest, so the matching
 	// positive delay holds the part at rest, then joins its loop at exactly the same phase.
-	// Run whenever animations are (re)created: on insertion, motion on, tracking over.
+	// Run whenever animations are (re)created: on insertion, motion on, tracking over, play.
 	function settle(svg) {
 		const anims = svg.getAnimations({ subtree: true });
 		// When only some loops restart (the glances, after cursor tracking), the ones that kept
@@ -264,7 +291,7 @@
 			const d = (elapsed - delay) % period;
 			fixes.push([a, d === 0 ? 0 : period - d]);
 		}
-		// Mark every animated element, so pausing (.sf-paused .sf-a in the CSS) restyles only
+		// Mark every animated element, so parking (.sf-paused .sf-a in the CSS) restyles only
 		// those: the crowd has 328 of them among 6900 elements.
 		for (const a of anims) a.effect.target.classList.add("sf-a");
 		for (const [a, delay] of fixes) a.effect.updateTiming({ delay });
@@ -284,9 +311,10 @@
 		else if (!reaim) reaim = setTimeout(() => ((reaim = 0), schedule()), lastScroll + CALM_MS - performance.now());
 	};
 
-	// Overlays out of view pause at once, so they cost nothing. Overlays in view play, but
-	// only once the page is calm: starting one restyles its moving parts, which a scroll
-	// can do without. One that comes into view while the cursor leads gets its eyes aimed.
+	// Overlays out of view are parked at once (.sf-paused: their parts rest and run no
+	// animation), so they cost nothing, not even a compositor layer per part. Overlays in view
+	// play, but only once the page is calm: starting one restyles its moving parts, which a
+	// scroll can do without. One that comes into view while the cursor leads gets its eyes aimed.
 	let playing = false;
 	const offscreen = new IntersectionObserver((entries) => {
 		for (const entry of entries) {
@@ -295,15 +323,21 @@
 			if (!o.onScreen) o.svg.classList.add("sf-paused");
 		}
 		eyesOnScreen = overlays.some((o) => o.onScreen && o.looks.length);
-		if (!playing) {
+		if (!playing && !loading) {
 			playing = true;
 			whenCalm(() => {
 				playing = false;
-				for (const o of overlays) if (o.onScreen) o.svg.classList.remove("sf-paused");
+				play();
 			});
 		}
 		schedule();
 	});
+	// Playing recreates a parked overlay's animations, so they are settled again: from rest.
+	const play = () => {
+		const parked = overlays.filter((o) => o.onScreen && o.svg.classList.contains("sf-paused"));
+		for (const o of parked) o.svg.classList.remove("sf-paused");
+		for (const o of parked) settle(o.svg);
+	};
 
 	// The rest-pose matrix from an element's user space to its overlay's: each transform
 	// attribute on the way up. CSS animations (a blink's scaleY, a sway) are left out on
@@ -383,7 +417,7 @@
 	}
 
 	addEventListener("pointermove", (event) => {
-		if (!on || !finePointer.matches || event.pointerType === "touch") return;
+		if (loading || !on || !finePointer.matches || event.pointerType === "touch") return;
 		pointer = { x: event.clientX, y: event.clientY };
 		lastMove = performance.now();
 		schedule();
@@ -398,7 +432,7 @@
 	}, { passive: true });
 	// The layout changed: refit every overlay, once per frame however many events arrive.
 	let refitting = 0;
-	addEventListener("resize", () => {
+	function refit() {
 		if (refitting) return;
 		refitting = requestAnimationFrame(() => {
 			refitting = 0;
@@ -406,7 +440,8 @@
 			overlays.forEach((o, i) => place(o, boxes[i]));
 			schedule();
 		});
-	}, { passive: true });
+	}
+	addEventListener("resize", refit, { passive: true });
 	finePointer.addEventListener("change", stopTracking);
 
 	// Follow the system setting live while no choice is stored.
@@ -421,4 +456,106 @@
 		});
 	}
 	apply();
+
+	// ---------------------------------------------------------------------------------------
+	// Loading screen
+	//
+	// The head script puts the screen up before the first paint (.is-loading; it shows only
+	// with JS). Behind it the page is inert and busy while this prepares, in order: the web
+	// fonts, the first screen's images, then every drawing, nearest first: with motion on, its
+	// motion layer (inserted parked; the still is skipped, as the base replaces it unseen),
+	// with motion off, its still. The bar shows the share of those milestones reached. Once
+	// all are, and at least MIN_MS after navigation began, or after MAX_MS whatever is left
+	// (the calm-time preparation then finishes it), Nib makes one last hop and the screen
+	// lifts away; without motion it fades. The head script removes it after 12 s in any
+	// case, should this script never run.
+	const MIN_MS = 1000;
+	const MAX_MS = 10000;
+	const reachedSteps = new Set();
+	let expected = null; // the milestones the screen waits for, while it is up
+	let behind = []; // the page under the screen: inert and busy meanwhile
+
+	function reached(what, step) {
+		reachedSteps.add(typeof what === "string" ? what : `${what.dataset.motion} ${step}`);
+		if (loading && expected) showProgress();
+	}
+
+	function showProgress() {
+		let n = 0;
+		for (const step of expected) if (reachedSteps.has(step)) n++;
+		loader.querySelector(".loader-fill").style.transform = `scaleX(${n / expected.size})`;
+		loader.querySelector(".loader-pct").textContent = `${Math.round((100 * n) / expected.size)}%`;
+		if (n === expected.size) setTimeout(reveal, Math.max(0, MIN_MS - performance.now()));
+	}
+
+	function reveal() {
+		if (!loading) return;
+		loading = false;
+		for (const el of behind) {
+			el.inert = false;
+			el.removeAttribute("aria-busy");
+		}
+		root.classList.remove("is-loading");
+		refit(); // should the scrollbar's return have moved the layout
+		lift();
+		watch(); // the usual calm-time preparation takes over anything left
+		play(); // overlays in view start, from rest
+	}
+
+	// With motion: one last big hop, then the paper lifts away. Without: a short fade.
+	// Either way the screen then leaves the DOM.
+	function lift() {
+		const gone = () => loader.remove();
+		loader.addEventListener("transitionend", (event) => event.target === loader && gone());
+		setTimeout(gone, 1500);
+		if (!on) {
+			loader.classList.add("is-leaving");
+			return;
+		}
+		// From wherever Nib is in his bounce: down into a squash, then a leap, his shadow
+		// spreading as he lands and shrinking away as he goes (still only transforms and
+		// opacity on whole <svg> elements, so the compositor runs them).
+		const nib = loader.querySelector(".loader-nib");
+		const shadow = loader.querySelector(".loader-shadow");
+		const from = getComputedStyle(nib).transform;
+		const { transform: shadowFrom, opacity: shadowOpacity } = getComputedStyle(shadow);
+		loader.classList.add("is-done");
+		const land = { offset: 0.2, easing: "cubic-bezier(0.2, 0.7, 0.4, 1)" };
+		const timing = { duration: 560, easing: "cubic-bezier(0.4, 0, 0.6, 1)", fill: "forwards" };
+		nib.animate([{ transform: from }, { transform: "translateY(0) scale(1.2, 0.78)", ...land }, { transform: "translateY(-220px) scale(0.94, 1.08)" }], timing);
+		shadow.animate([{ transform: shadowFrom, opacity: shadowOpacity }, { transform: "scale(1.2, 1)", opacity: 1, ...land }, { transform: "scale(0.2, 0.5)", opacity: 0 }], timing);
+		setTimeout(() => loader.classList.add("is-leaving"), 140);
+	}
+
+	if (loader && !loading) loader.remove(); // up without .is-loading: nothing to wait for
+	if (loading) {
+		behind = [...document.body.children].filter((el) => el !== loader);
+		for (const el of behind) {
+			el.inert = true;
+			el.setAttribute("aria-busy", "true");
+		}
+		// The milestones: the fonts, each image of the first screen, then for every drawing
+		// either its motion layer's three steps (motion on) or its still (motion off).
+		const first = [...document.images].filter((img) => !loader.contains(img) && img.getAttribute("loading") !== "lazy");
+		expected = new Set(["fonts", ...first.map((img, i) => `first ${i}`)]);
+		for (const img of images) {
+			if (on) for (const step of ["files", "parse", "insert"]) expected.add(`${img.dataset.motion} ${step}`);
+			else if (!firstScreen.has(img)) {
+				expected.add(`${img.dataset.motion} still`);
+				// However the still arrives (the browser may load it on its own first).
+				img.decode().catch(() => {}).then(() => reached(img, "still"));
+			}
+		}
+		showProgress();
+		setTimeout(reveal, Math.max(0, MAX_MS - performance.now()));
+		(async () => {
+			await document.fonts.ready;
+			reached("fonts");
+			await Promise.all(first.map((img, i) => img.decode().catch(() => {}).then(() => reached(`first ${i}`))));
+			// Every motion file is wanted now: ask for them all at once, nearest first, so the
+			// network stays busy while the main thread parses and inserts them one by one.
+			if (on) for (const img of [...images].sort((a, b) => distance(a) - distance(b))) filesOf(img).catch(() => {});
+			work(); // every drawing, nearest first (see nearest() and upgradeDue() while loading)
+		})();
+	}
 })();

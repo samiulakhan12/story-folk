@@ -13,7 +13,26 @@
 	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&amp;family=Outfit:wght@600;700;800;900&amp;display=swap">
 	<link rel="stylesheet" href="styles.css">
 	<script>
-		document.documentElement.classList.add("js");
+		// With JS, the loading screen shows from the first paint, and motion.js lifts it once the
+		// page is ready (see its "Loading screen" section). Whether motion is on is known here
+		// already (the same rule as motion.js), so a visitor without motion never sees a bounce.
+		(() => {
+			const root = document.documentElement;
+			root.classList.add("js", "is-loading");
+			let choice = null;
+			try { choice = localStorage.getItem("sf-motion"); } catch {}
+			if (choice !== "on" && (choice === "off" || matchMedia("(prefers-reduced-motion: reduce)").matches)) root.classList.add("motion-off");
+			// The last resort: whatever happens to motion.js, the page shows after 12 s.
+			setTimeout(() => {
+				if (!root.classList.contains("is-loading")) return;
+				root.classList.remove("is-loading");
+				document.querySelector(".loader")?.remove();
+				for (const el of document.querySelectorAll("body > [inert]")) {
+					el.inert = false;
+					el.removeAttribute("aria-busy");
+				}
+			}, 12000);
+		})();
 		document.addEventListener("DOMContentLoaded", () => {
 			const toggle = document.querySelector(".menu-toggle");
 			const nav = toggle.closest("nav");
@@ -37,6 +56,74 @@
 	<script src="motion.js" defer></script>
 </head>
 <body id="top">
+	<div class="loader" role="status">
+		<span class="visually-hidden">Loading Storyfolk</span>
+		<div class="loader-scene" aria-hidden="true">
+			<svg class="loader-shadow" viewBox="0 0 100 16" width="100" height="16" focusable="false">
+				<pattern id="loader-tone" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+					<circle cx="2" cy="2" r="1.05" fill="#111"/>
+				</pattern>
+				<ellipse cx="50" cy="8" rx="47" ry="6.6" fill="url(#loader-tone)"/>
+			</svg>
+			<svg class="loader-drop loader-drop-1" viewBox="-6 -9 12 15" width="12" height="15" focusable="false"><path d="M0-8.5C2-4.5 5-1.5 5 1.8 5 4.6 2.8 6 0 6S-5 4.6-5 1.8C-5-1.5-2-4.5 0-8.5Z" fill="#111"/></svg>
+			<svg class="loader-drop loader-drop-2" viewBox="-6 -9 12 15" width="12" height="15" focusable="false"><path d="M0-8.5C2-4.5 5-1.5 5 1.8 5 4.6 2.8 6 0 6S-5 4.6-5 1.8C-5-1.5-2-4.5 0-8.5Z" fill="#111"/></svg>
+			<svg class="loader-drop loader-drop-3" viewBox="-6 -9 12 15" width="12" height="15" focusable="false"><path d="M0-8.5C2-4.5 5-1.5 5 1.8 5 4.6 2.8 6 0 6S-5 4.6-5 1.8C-5-1.5-2-4.5 0-8.5Z" fill="#111"/></svg>
+			<svg class="loader-nib" viewBox="-64 -98 128 146" width="128" height="146" focusable="false">
+				<pattern id="loader-cheek" width="3.2" height="3.2" patternUnits="userSpaceOnUse">
+					<rect width="3.2" height="3.2" fill="#fff"/>
+					<circle cx="1.6" cy="1.6" r=".75" fill="#111"/>
+				</pattern>
+				<g fill="none" stroke="#111" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M-31 6Q-46 1-48-17M31 6Q46 1 48-17" stroke-width="6.5"/>
+					<path d="M0-58C8-42 36-22 36 4 36 26 20 40 0 40S-36 26-36 4C-36-22-8-42 0-58Z" fill="#111" stroke-width="4.5"/>
+					<path d="M0-88C5-78 13-68 13-58 13-51 8-48 0-47-8-48-13-51-13-58-13-68-5-78 0-88Z" fill="#fff" stroke-width="3.6"/>
+					<path d="M0-83V-65M-11.5-54Q0-49.5 11.5-54" stroke-width="2.2"/>
+				</g>
+				<g fill="#111">
+					<circle cx="-48.5" cy="-20" r="5.4"/>
+					<circle cx="48.5" cy="-20" r="5.4"/>
+					<circle cy="-61.5" r="2.8"/>
+					<circle cx="4.5" cy="-76" r="1.1"/>
+					<circle cx="8" cy="-69.5" r="1.3"/>
+					<circle cx="4.6" cy="-69" r=".9"/>
+					<circle cx="10.6" cy="-62.5" r="1.4"/>
+					<circle cx="6.8" cy="-56.5" r="1.4"/>
+					<circle cx="10.4" cy="-55.6" r="1.1"/>
+				</g>
+				<g fill="none" stroke="#fff" stroke-linecap="round">
+					<path d="M-27-2Q-29-24-12-38" stroke-width="5.5"/>
+					<path d="M30 12Q30 28 14 35" stroke-width="2.2"/>
+					<path d="M-23-21Q-15-26-7-22M7-22Q15-26 23-21" stroke-width="2.6"/>
+				</g>
+				<g fill="#fff">
+					<circle cx="-28" cy="7" r="2.6"/>
+					<circle cx="-14" cy="-2" r="13"/>
+					<circle cx="14" cy="-2" r="13"/>
+					<path d="M-7 16Q0 28 7 16 0 19-7 16Z"/>
+				</g>
+				<circle cx="-10.5" cy="1.5" r="6.6" fill="#111"/>
+				<circle cx="17.5" cy="1.5" r="6.6" fill="#111"/>
+				<g fill="#fff">
+					<circle cx="-12.8" cy="-1.2" r="2.5"/>
+					<circle cx="15.2" cy="-1.2" r="2.5"/>
+					<circle cx="-8.5" cy="4" r="1"/>
+					<circle cx="19.5" cy="4" r="1"/>
+				</g>
+				<ellipse cx="-25" cy="13" rx="5.5" ry="3.2" fill="url(#loader-cheek)"/>
+				<ellipse cx="25" cy="13" rx="5.5" ry="3.2" fill="url(#loader-cheek)"/>
+			</svg>
+			<svg class="loader-ground" viewBox="0 0 200 10" width="200" height="10" focusable="false"><path d="M4 5.6C28 4 52 6.4 76 5.2S124 4 150 5.4 184 6 196 4.8" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round"/></svg>
+		</div>
+		<p class="loader-brand" aria-hidden="true"><img src="assets/logo-mark.svg" width="64" height="64" alt="">storyfolk</p>
+		<p class="loader-caption" aria-hidden="true">Inking the pages…</p>
+		<div class="loader-progress" aria-hidden="true">
+			<div class="loader-bar">
+				<svg class="loader-fill" viewBox="0 0 220 16" preserveAspectRatio="none" focusable="false"><path d="M8 5C70 4.4 150 5.4 212 4.8 214.6 5.2 215.6 6.8 215.5 8 215.4 9.5 214.3 10.9 212 11 150 11.6 70 10.8 8 11.2 5.8 11.1 4.6 9.8 4.6 8.1 4.6 6.5 5.8 5.1 8 5Z" fill="#111"/></svg>
+				<svg class="loader-track" viewBox="0 0 220 16" preserveAspectRatio="none" focusable="false"><path d="M8 2.4C60 1.4 160 3 212 2.1 216.6 2.5 218.6 5.4 218.4 8.2 218.1 11.1 216 13.5 212 13.7 150 14.7 60 13.3 8 13.9 3.9 13.7 1.6 11 1.7 8.1 1.8 5.1 3.9 2.6 8 2.4Z" fill="none" stroke="#111" stroke-width="2.4" vector-effect="non-scaling-stroke"/></svg>
+			</div>
+			<span class="loader-pct">0%</span>
+		</div>
+	</div>
 	<a class="skip-link" href="#main">Skip to content</a>
 
 	<header class="site-header">
