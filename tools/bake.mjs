@@ -198,6 +198,18 @@ const hrefRef = (el) => {
 const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon"]);
 // Containers whose children are drawn, and elements that are never drawn where they stand.
 const GROUPS = new Set(["g", "a", "switch"]);
+
+/** Every never-drawn element (clip path, mask, defs...) among `kids` and their descendants,
+ * without looking inside the ones it finds. */
+function definitionsIn(kids) {
+	const found = [];
+	for (const k of kids) {
+		if (k.type !== "el") continue;
+		if (NOT_DRAWN.has(k.name)) found.push(k);
+		else found.push(...definitionsIn(k.kids ?? []));
+	}
+	return found;
+}
 const NOT_DRAWN = new Set([
 	"defs",
 	"clipPath",
@@ -1099,10 +1111,15 @@ export function bakeSvg(src) {
 					const copy = element("g", [], copyForHalo(el.kids, reach, state, 1, ids, recipes, notes));
 					copy.ink = halo.ink ? moverFor(halo.ink) : content?.ink ? null : undefined;
 					const order = recipe.layers.map((l) => (l.kind === "halo" ? [copy] : el.kids)).flat();
-					// A halo-only filter draws no content, but its clip paths and masks may be used.
-					el.kids = content
-						? order
-						: [copy, ...el.kids.filter((k) => k.type === "el" && NOT_DRAWN.has(k.name))];
+					// A halo-only filter draws no content, but the copy still refers to the clip
+					// paths and masks defined inside it, at any depth, so those are kept. Moving them
+					// up is safe: user-space clip and mask content is placed by whoever refers to it.
+					let defs = [];
+					if (!content) {
+						defs = definitionsIn(el.kids);
+						for (const d of defs) if (d.ink === undefined) d.ink = copy.ink;
+					}
+					el.kids = content ? order : [copy, ...defs];
 					const entry = { el, copy, parent: el };
 					halos.push(entry);
 					stats.halos++;

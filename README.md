@@ -27,7 +27,9 @@ and Lora) come from Google Fonts, and the page falls back to system fonts withou
 | `assets/duo.svg` | Pip and Juniper setting out (700x820), in the join section |
 | `assets/reader.svg` | Wren reading on a stack of books (800x800), in the footer |
 | `assets/*-base.svg`, `assets/*-motion.svg` | The motion files of the seven animated drawings (see [Motion](#motion)) |
-| `tools/` | Scripts that regenerate some of the illustrations (see below) |
+| `tools/generate-*.py`, `tools/generate-crowd.mjs` | The generators that write the illustrations (see below) |
+| `tools/build.mjs` | Rebuilds all of the art in one command: runs every generator, then bakes every drawing |
+| `tools/bake.mjs` | Bakes the ink wobble and the white halos into plain geometry, so no SVG filter runs at draw time |
 
 Every `<img>` carries its width and height, so the layout holds its shape while the
 drawings load. Drawings below the first screen load lazily (see [Performance](#performance)).
@@ -43,11 +45,13 @@ npx serve .
 
 ## How each illustration is made
 
-Every drawing is an SVG of hand-placed path data, with ink outlines, halftone and hatch
-patterns and a light turbulence filter for the hand-inked wobble. Some are written out
-by a script in `tools/`, which assembles the groups, clips and repeated texture marks;
-for those, edit the script and re-run it rather than editing the SVG. Run every script
-from the repository root.
+Every drawing is an SVG of hand-placed path data, with ink outlines and halftone and hatch
+patterns. Most are written out by a script in `tools/`, which assembles the groups, clips
+and repeated texture marks; for those, edit the script and rebuild rather than editing the
+SVG. The scripts draw the hand-inked wobble and the white outlines around some characters
+as SVG filters (`url(#ink)`, a light turbulence displacement, and `url(#halo)`, a white
+dilation). `tools/bake.mjs` then bakes both into the geometry, so the published files
+carry no filters (see [The bake](#the-bake)). Run every script from the repository root.
 
 | Illustration | How it is produced |
 | --- | --- |
@@ -69,11 +73,47 @@ The Python generators need Python 3 with shapely installed (`pip install shapely
 Of those, `generate-hero-letters.py` and `generate-treehouse.py` import shapely; the others
 use just the standard library.
 
-To regenerate the crowd:
+To rebuild all of the art:
+
+```sh
+node tools/build.mjs
+```
+
+It runs every generator (the hero letters first), then bakes every `assets/*.svg` in place.
+It first checks that python3 can import shapely and stops with a message if not, before
+anything is rewritten; for a shapely installed elsewhere, run
+`PYTHONPATH=/path/to/site-packages node tools/build.mjs`.
+
+To rebuild one drawing, run its generator, then bake the files it wrote:
 
 ```sh
 node tools/generate-crowd.mjs
+node tools/bake.mjs --in-place assets/crowd.svg assets/crowd-base.svg assets/crowd-motion.svg
 ```
+
+A generator's output is not finished until it is baked. Never edit a baked SVG by hand:
+change the generator and rebuild. Baking is deterministic and safe to repeat (a baked file
+passes through unchanged), so `node tools/bake.mjs --in-place assets/*.svg` is always safe.
+
+### The bake
+
+- **Ink.** Every shape under the ink filter has its points moved by the same noise the
+  filter used: the SVG specification's seeded turbulence, read from the filter's own
+  settings (base frequency 0.035, 2 octaves, seed 7, scale 2.6, so at most about ±1.3
+  units). The noise is read in each shape's own coordinates, ignoring parent transforms, so
+  a shape written with the same path data in `x.svg`, `x-base.svg` and `x-motion.svg`
+  wobbles the same in all three. Long segments are split where the noise bends them, so
+  straight edges wobble too. Arcs become curves. Circles, ellipses and rects become paths,
+  except dots and rivets, which only move. Lines, polylines and polygons become paths.
+  Shapes in `<clipPath>` and `<mask>` are baked too, so clip edges stay on the art.
+- **Halo.** A halo group first paints a white copy of its content (every fill and stroke
+  white, strokes widened by the filter's radius), baked the same way, then the content.
+  Copies hidden under the art or over white paper are dropped. A group whose filter draws
+  only the halo keeps just the copy, plus the clip paths and masks it refers to.
+- **Kept as they are:** patterns (the halftone and hatch tiles), `<style>`, classes, ids,
+  transforms and element order. Outlines drawn more than once are written once in `<defs>`
+  and reused with `<use>` (ids `bk1`, `bk2`…). Unused filters are removed and any other
+  filter is reported and kept.
 
 ## Motion
 
@@ -89,9 +129,14 @@ The characters blink, look around, wave, sway and bob. Seven drawings are animat
 | `x-motion.svg` | Only the moving parts, on a transparent canvas of the same size, animated by its own internal `<style>`. |
 
 At rest, `x-base.svg` plus `x-motion.svg` is exactly `x.svg`. The split is for speed: a CSS
-animation inside an SVG repaints the whole SVG every frame, and with the ink filters that
-drops large drawings to about 10 fps. Keeping the static plate in an `<img>` lets only the
-small motion layer repaint.
+animation inside an SVG repaints the whole SVG every frame. With the runtime ink filters this
+used to drop large drawings to about 10 fps; the filters are now baked out, but repainting
+a large drawing still costs, so only the small motion layer repaints.
+
+In the crowd, every one of the 63 portraits moves. Each head bounces, nods, giggles, tilts,
+looks around or does a double-take, with its hair, hat and accessories. Faces blink, squeeze
+or glint, and accessories wiggle. The changes are staged across thirds of the band on a
+shared 5.4 s clock, so only part of it repaints at a time.
 
 ### How the page upgrades
 
@@ -146,6 +191,10 @@ animate it, and the script touches nothing else.
 - An element animated by CSS carries no `transform` attribute; pivot with a
   `translate(px py)` wrapper and `transform-origin: 0 0`.
 - Ids can be anything; the page prefixes them.
+- Write every shape the still also draws with the same element and attribute values, in the
+  same local coordinates, under the same ink and halo filters. The bake moves identical path
+  data identically, which keeps base plus motion at rest equal to the still.
+- Draw with the filters and let the bake remove them; a generator never moves points itself.
 
 ## Performance
 
