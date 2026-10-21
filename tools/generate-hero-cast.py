@@ -536,7 +536,11 @@ class BaseOnly:
         return ""
 
 
-BIG = "M-400 -500L400 -500L400 400L-400 400Z"  # a local rect, for "everything outside" clips
+# Clips in the motion layer are drawn as tight boxes around the part they clip, its whole
+# motion envelope plus a margin (a clip's box is what the browser repaints with it on every
+# frame, so a canvas-wide box made the whole layer repaint). A hole that keeps a part out of
+# something drawn in front of it reuses that shape's own path data, so the bake moves the
+# hole's edge exactly as it moves the shape's.
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +613,7 @@ def pip():
 
     # the lower legs kick from the knees; in the motion layer they are clipped to below the
     # shorts' outer edge (the shorts lie over their tops) and backed in white over the T
-    o.append(Clip("M-300 -30L300 -30L300 300L-300 300Z" + PIP_SHORTS, [
+    o.append(Clip(rect(-70, -14, 80, 104) + PIP_SHORTS, [
         Mo("hc-pip-legl", [leg(1)], pivot=(-20, 11), back=True),
         Mo("hc-pip-legr", [Grp([leg(-1)], "rotate(-14 18 10)")], pivot=(18, 10), back=True)],
         evenodd=True, tr="translate(0 2.25)"))
@@ -657,12 +661,12 @@ def pip():
     # the tail flutters as three hinged segments (a wave running out to the tip); the root
     # stays in the base, under the wrap and face, and each segment overlaps the next by 2
     bk = nid("b")
-    root = (f'<clipPath id="{bk}"><path d="{rect(-300, -300, 40, 300)}"/></clipPath>'
+    root = (f'<clipPath id="{bk}"><path d="{rect(8, -74, 40, -40)}"/></clipPath>'
             f'<g clip-path="url(#{bk})">{tail_s}</g>')
-    seg3 = Mo("hc-pip-scarf3", [Clip(rect(88, -200, 300, 100), [retag(tail_s, "c")]),
+    seg3 = Mo("hc-pip-scarf3", [Clip(rect(88, -88, 114, -55), [retag(tail_s, "c")]),
                                 Mo("hc-pip-wind", [wind, arcs])], pivot=(88, -68.5))
-    seg2 = Mo("hc-pip-scarf2", [Clip(rect(64, -200, 90, 100), [retag(tail_s, "b")]), seg3], pivot=(64, -62))
-    seg1 = Mo("hc-pip-scarf1", [Clip(rect(38, -200, 66, 100), [tail_s]), seg2], pivot=(38, -58.5))
+    seg2 = Mo("hc-pip-scarf2", [Clip(rect(64, -83, 90, -47), [retag(tail_s, "b")]), seg3], pivot=(64, -62))
+    seg1 = Mo("hc-pip-scarf1", [Clip(rect(38, -78, 66, -44), [tail_s]), seg2], pivot=(38, -58.5))
     o.append(Split(tail_s + wind + arcs, root, [seg1]))
     ftail = "M-25 -52C-27 -40 -25 -28 -23 -15L-8 -17C-10 -29 -10 -41 -10 -52Z"
     o.append(S(ftail, W, 4, F("M-30 -46L-5 -46L-5 -39L-30 -39Z", DD) + F("M-30 -33L-5 -33L-5 -26L-30 -26Z", DD)))
@@ -803,7 +807,7 @@ def juniper():
 
     # far arm (behind the body): elbow out front, hand under the spyglass barrel. In the
     # motion layer it is clipped clear of the shirt, which lies over its root.
-    o.append(Clip(BIG + JUN_SHIRT, [Mo("hc-jun-pan", [
+    o.append(Clip(rect(-24, -128, 116, -52) + JUN_SHIRT, [Mo("hc-jun-pan", [
         S(cr([(22, -89), (42, -91), (60, -93), (68, -87), (62, -78), (42, -76), (22, -75)]), W, 4,
           F("M20 -82L72 -84L72 -70L20 -70Z", DM)),
         S(cr([(63, -90), (78, -101), (94, -111), (102, -106), (96, -96), (80, -84), (69, -80)]), W, 3.6,
@@ -1051,14 +1055,15 @@ def nib():
     # arms
     fl.append(Mo("hc-nib-arml", [L("M-33 10Q-46 6 -50 -9", 6.5) + C(-51, -12, 5.4, INK)], pivot=(-33, 10), back=True))
     fl.append(Mo("hc-nib-armr", [L("M33 14Q46 19 52 11", 6.5) + C(54.5, 9, 5.4, INK)], pivot=(33, 14), back=True))
-    # face: white eyes whose pupils (clipped to the whites) follow the cursor
+    # face: white eyes whose pupils follow the cursor
     whites = C(-14, -2, 13, W) + C(14, -2, 13, W)
     pupils = C(-10.5, 1.5, 6.6, INK) + C(17.5, 1.5, 6.6, INK)
     catch = C(-12.8, -1.2, 2.5, W) + C(15.2, -1.2, 2.5, W) + C(-8.5, 4, 1, W) + C(19.5, 4, 1, W)
+    # (no clip to the whites: at full reach a pupil strays at most ~2 units past its white,
+    # always onto Nib's own black ink, where black on black looks the same as clipped)
     eye = [whites]
-    for ex, px, cx, sx in ((-14, -10.5, -12.8, -8.5), (14, 17.5, 15.2, 19.5)):
-        eye.append(Clip(circ(ex, -2, 13), [
-            Look(3.5, "hc-nib-glance", [C(px, 1.5, 6.6, INK) + C(cx, -1.2, 2.5, W) + C(sx, 4, 1, W)])]))
+    for px, cx, sx in ((-10.5, -12.8, -8.5), (17.5, 15.2, 19.5)):
+        eye.append(Look(3.5, "hc-nib-glance", [C(px, 1.5, 6.6, INK) + C(cx, -1.2, 2.5, W) + C(sx, 4, 1, W)]))
     fl.append(Split(whites + pupils + catch, "", [Mo("hc-nib-blink", eye, pivot=(0, -2))]))
     fl.append(T(-23, -20, -15, -25, -7, -21, 2.6, W) + T(7, -21, 15, -25, 23, -20, 2.6, W))
     fl.append(P("M-7 16Q0 28 7 16Q0 19 -7 16Z", W, 0))
@@ -1486,12 +1491,12 @@ def quirk():
     body = "M-30 -60C-34 -88 -14 -104 8 -104C32 -104 44 -84 42 -54C40 -24 30 -2 6 -2C-18 -2 -30 -28 -30 -60Z"
     headd = scallop([(-56, -116), (-54, -132), (-42, -144), (-24, -149), (-6, -144), (6, -132), (9, -114),
                      (2, -94), (-12, -84), (-30, -82), (-46, -90)], 0.18)
-    # the tail swishes behind the body and head: in the motion layer it is clipped out of
+    # the tail swishes behind the body and head: in the motion layer one clip keeps it out of
     # both, and their outlines are re-inked over it further down
-    o.append(Clip(BIG + body, [Clip(BIG + headd, [Mo("hc-qk-tail", [
+    o.append(Clip(rect(-62, -198, 94, 4) + body + headd, [Mo("hc-qk-tail", [
         L(tail, 31) + L(tail, 23.5, W) + L(tail, 23.5, DD, 'stroke-dasharray="12 14"'),
         T(-6, -146, -10, -134, -2, -124, 3) + T(4, -150, 10, -140, 8, -128, 2.4)], pivot=(30, -30))],
-        evenodd=True)], evenodd=True))
+        evenodd=True))
     o.append(S(body, W, 4.8, F("M14 -108C40 -100 48 -60 40 -30C34 -10 24 0 10 2L50 2L50 -108Z", DM)
                + P("M-18 -64C-20 -42 -12 -16 6 -12C18 -16 22 -40 18 -64C10 -72 -10 -72 -18 -64Z", W, 0)
                + L("M-18 -64C-20 -42 -12 -16 6 -12C18 -16 22 -40 18 -64", 1.6, extra='stroke-dasharray="1 0"')
@@ -1501,7 +1506,7 @@ def quirk():
                    F(f"M{fx + 2} -14L{fx + 16} -14L{fx + 16} 2L{fx + 2} 2Z", DL))
                  + L(f"M{fx - 4} -1L{fx - 4} -5M{fx + 3} -1L{fx + 3} -5", 1.6))
     # ears twitch from their roots (clipped out of the head, which lies over them)
-    o.append(Clip(BIG + headd, [
+    o.append(Clip(rect(-106, -204, 24, -76) + headd, [
         Mo("hc-qk-earl", [S("M-48 -128C-66 -146 -80 -168 -78 -180C-64 -180 -46 -162 -36 -140Z", W, 4.2,
                             P("M-48 -136C-60 -150 -70 -164 -70 -172C-62 -170 -50 -156 -43 -142Z", HA, 2))],
            pivot=(-42, -134), back=True),
@@ -1512,7 +1517,7 @@ def quirk():
     tuft = P("M-34 -146L-30 -158L-24 -148L-20 -160L-15 -147Z", W, 2.6)
     # (the band above y=-118 holds the head's outline where the ears and tail meet it; the
     # tuft is redrawn over it as in the still; the second box is where the tail leaves the body)
-    o.append(MOnly([Clip(rect(-400, -500, 400, -118) + rect(25, -80, 400, -14), [L(headd, 4.6), L(body, 4.8), tuft])]))
+    o.append(MOnly([Clip(rect(-62, -168, 14, -118) + rect(25, -80, 48, -14), [L(headd, 4.6), L(body, 4.8), tuft])]))
     o.append(S(headd, W, 4.6, F(circ(-12, -108, 28), DL) + P(circ(-30, -118, 30), W, 0)))
     o.append(tuft)
     eyes = E(-36, -114, 5.6, 7.2, INK) + E(-12, -116, 5.6, 7.2, INK)
