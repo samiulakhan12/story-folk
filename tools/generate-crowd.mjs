@@ -2,9 +2,10 @@
 // "staycurious" band. A seeded PRNG picks every part, so the output is stable from run to run.
 // Run from any directory: node tools/generate-crowd.mjs. One run writes three files:
 //   assets/crowd.svg         the complete still (motion off, no-JS fallback, reference)
-//   assets/crowd-base.svg    the still minus the open eyes, which leaves the face skin bare
-//   assets/crowd-motion.svg  only the open eyes, which blink and glance; base + motion at rest
-//                            reproduce the still
+//   assets/crowd-base.svg    the still minus every head, which leaves the shoulders and collars
+//   assets/crowd-motion.svg  every head again, which tilt, nod and bounce while their faces
+//                            blink, glance, squeeze and laugh and their hats and trinkets wiggle;
+//                            base + motion at rest reproduce the still
 
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -79,6 +80,16 @@ function deck(entries, count) {
 	return shuffle(cards.slice(0, count));
 }
 
+// ------------------------------------------------------------------ drawing passes
+
+// Every figure is drawn up to three times from the same seed, so its shapes come out identical:
+// once for the still (and the base), once for the motion layer, where MOTION wraps each moving
+// part in its animated group and adds the motion-only shapes (glints, notes, sparkles), and once
+// more with SIL set for the heads that meet the black band, which turns every shape into a bare
+// white silhouette for their white outline.
+let MOTION = false;
+let SIL = false;
+
 // ------------------------------------------------------------------ svg helpers
 
 function f(v) {
@@ -95,30 +106,36 @@ function p(strings, ...values) {
 	return out;
 }
 
-function shape(d, fill = W, sw = 4.2) {
-	const stroke = sw ? ` stroke="${INK}" stroke-width="${f(sw)}"` : "";
-	return `<path d="${d}" fill="${fill}"${stroke}/>`;
+/** Fill and stroke attributes; a silhouette paints whatever is drawn in plain white. */
+function paint(fill, sw, color = INK) {
+	const stroke = sw ? ` stroke="${SIL ? W : color}" stroke-width="${f(sw)}"` : "";
+	return ` fill="${SIL && fill !== "none" ? W : fill}"${stroke}`;
 }
 
+function shape(d, fill = W, sw = 4.2) {
+	return `<path d="${d}"${paint(fill, sw)}/>`;
+}
+
+/** A bare line. A silhouette leaves lines out: they sit inside the shapes that it fills. */
 function ink(d, sw = 2.6, color = INK) {
-	return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${f(sw)}"/>`;
+	if (SIL) return "";
+	return `<path d="${d}"${paint("none", sw, color)}/>`;
 }
 
 function dashed(d, sw = 1.4) {
+	if (SIL) return "";
 	const stroke = `stroke="${INK}" stroke-width="${f(sw)}" stroke-dasharray="3 3.5"`;
 	return `<path d="${d}" fill="none" ${stroke}/>`;
 }
 
 function circle(cx, cy, r, fill = W, sw = 0) {
-	const stroke = sw ? ` stroke="${INK}" stroke-width="${f(sw)}"` : "";
-	return `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}" fill="${fill}"${stroke}/>`;
+	return `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}"${paint(fill, sw)}/>`;
 }
 
 function oval(cx, cy, rx, ry, fill = W, sw = 0, rot = 0) {
-	const stroke = sw ? ` stroke="${INK}" stroke-width="${f(sw)}"` : "";
 	const turn = rot ? ` transform="rotate(${f(rot)} ${f(cx)} ${f(cy)})"` : "";
 	const at = `cx="${f(cx)}" cy="${f(cy)}" rx="${f(rx)}" ry="${f(ry)}"`;
-	return `<ellipse ${at} fill="${fill}"${stroke}${turn}/>`;
+	return `<ellipse ${at}${paint(fill, sw)}${turn}/>`;
 }
 
 function group(body, transform) {
@@ -129,6 +146,7 @@ let uid = 0;
 
 /** Filled shape whose inner shading is clipped to it, outlined last (path data written once). */
 function clipped(d, fill, sw, inner, evenodd = false) {
+	if (SIL) return `<path d="${d}"${evenodd ? ' fill-rule="evenodd"' : ""}${paint(fill, sw)}/>`;
 	uid += 1;
 	const rule = evenodd ? ' fill-rule="evenodd" clip-rule="evenodd"' : "";
 	return (
@@ -264,27 +282,630 @@ function faceGeo(h, k) {
 	return { ex: h.rx * 0.37, ey, er, eh, my: ey + eh + 12, lx: k.look };
 }
 
-// ------------------------------------------------------------------ moving eyes
+// ------------------------------------------------------------------ moving parts
 
-// While a figure is drawn, `figure` gathers its open eyes. Each one leaves a token in the
-// drawing: the still puts the eye back there, the base leaves the face skin under it bare, and
-// the motion layer draws the eyes again on their own so they can blink and glance.
-let figure = { eyes: [], tilt: 0, cy: 0 };
+// While a figure is drawn, `figure` holds its number in the crowd, its head's tilt about the
+// neck point (0, cy) and, in the motion pass, the open eyes its face has drawn so far.
+let figure = { n: 0, eyes: [], tilt: 0, cy: 0 };
 const OPEN_EYES = new Set(["open", "wide"]);
-const EYE_TOKEN = /\u0000(\d+)\u0000/g;
 
-/** An eye centred on (x, y) in head space; open ones move, drawn-closed ones stay put. */
+/** An eye centred on (x, y) in head space; in the motion pass open ones are kept for `eyePair`. */
 function blinker(kind, markup, x, y) {
-	if (!OPEN_EYES.has(kind)) return markup;
+	if (!MOTION || !OPEN_EYES.has(kind)) return markup;
 	figure.eyes.push({ markup, x, y });
-	return `\u0000${figure.eyes.length - 1}\u0000`;
+	return "";
 }
 
-/** The head's tilt about its neck point (0, cy), remembered so the eyes can follow it. */
+/** The head's tilt about its neck point (0, cy), remembered for the head's own pivot. */
 function headTurn(k, cy) {
 	figure.tilt = Number(f(k.tilt));
 	figure.cy = Number(f(cy));
 	return `rotate(${f(k.tilt)} 0 ${f(cy)})`;
+}
+
+// Every animated group gets a family class (for the shared rules) and its own class, named after
+// its figure, whose keyframes and timing are made once from a PRNG seeded by that name. Poses are
+// kept too, so the motion layer can work out how far each part can reach.
+const ANIMS = new Map();
+
+function seedOf(name) {
+	let h = SEED;
+	for (const c of name) h = Math.imul(h ^ c.charCodeAt(0), 2654435761) >>> 0;
+	return h;
+}
+
+/** A pose: translate (x, y), then rotate `r` degrees, then scale (sx, sy), about the pivot. */
+const P = (x = 0, y = 0, r = 0, sx = 1, sy = sx) => ({ x, y, r, sx, sy });
+const REST = P();
+const num = (v) => String(+v.toFixed(2));
+
+function poseCss(p, fns) {
+	if (p === REST) return "none";
+	const out = [];
+	const px = (v) => (num(v) === "0" ? "0" : `${num(v)}px`);
+	if (fns.includes("t")) out.push(`translate(${px(p.x)},${px(p.y)})`);
+	if (fns.includes("r")) out.push(`rotate(${num(p.r)}deg)`);
+	if (fns.includes("s")) out.push(`scale(${num(p.sx)},${num(p.sy)})`);
+	return out.join(" ");
+}
+
+/**
+ * Keyframes for one loop of `dur` ms that rests at REST and passes through `stops`, each
+ * [ms, pose, { o: opacity, ease: timing into the next stop }]. `fns` lists the transform
+ * functions every pose writes (t, r, s), so the browser interpolates them one by one; an empty
+ * `fns` animates opacity alone. `rest` is the opacity at rest when opacity is animated too.
+ */
+function loopKeys(name, dur, stops, fns, rest) {
+	const fade = rest !== undefined;
+	const all = [[0, REST, { o: rest }], ...stops];
+	if (all[all.length - 1][0] < dur) all.push([dur, REST, { o: rest }]);
+	// While a part is invisible it jumps to its next pose at once and holds it, instead of
+	// drifting there unseen: a change the eye can't see still costs a redraw, and outside the
+	// part's turn of the clock. The jump comes right after an event, or right before the first.
+	for (let i = all.length - 2; fade && i >= 0; i--) {
+		const [[ms, pose, opt = {}], [next, to, nopt = {}]] = [all[i], all[i + 1]];
+		const hidden = (opt.o ?? rest) === 0 && (nopt.o ?? rest) === 0;
+		if (!hidden || pose === to || next - ms <= 20) continue;
+		all.splice(i + 1, 0, ms > 0 ? [ms + 10, to, { o: 0 }] : [next - 10, pose, { o: 0 }]);
+	}
+	const blocks = new Map();
+	for (const [ms, pose, opt = {}] of all) {
+		const decl = [];
+		if (fns) decl.push(`transform:${poseCss(pose, fns)}`);
+		if (fade) decl.push(`opacity:${opt.o ?? rest}`);
+		if (opt.ease) decl.push(`animation-timing-function:${opt.ease}`);
+		const body = decl.join(";");
+		const at = `${+((ms / dur) * 100).toFixed(2)}%`;
+		blocks.set(body, [...(blocks.get(body) ?? []), at]);
+	}
+	const css = [...blocks].map(([body, at]) => `${at.join(",")}{${body}}`).join("");
+	return `@keyframes ${name}{${css}}`;
+}
+
+const SPRING = "cubic-bezier(.34,1.56,.64,1)";
+const SMOOTH = "cubic-bezier(.45,0,.55,1)";
+
+/**
+ * Registers the animation `cls` once. `make()`, with `plan` seeded from the name, returns
+ * { dur, stops, fns, rest, ease, lag, keys, reaches }: the loop in ms, its stops (see loopKeys),
+ * how far into the loop it starts (random unless `lag` is given), to share another animation's
+ * keyframes, their name in `keys`, and any poses it never plays but can be seen in (`reaches`).
+ * The rule, keyframes and poses are kept.
+ */
+function register(cls, family, make) {
+	if (ANIMS.has(cls)) return;
+	plan = mulberry32(seedOf(cls));
+	const a = make();
+	const delay = a.lag ?? Math.round(between(0, a.dur) / 10) * 10;
+	const name = a.keys ?? cls;
+	const rule =
+		`.${cls}{animation:${name} ${seconds(a.dur)}s ${a.ease ?? "ease-in-out"} ` +
+		`-${seconds(delay)}s infinite}`;
+	const keys = a.keys ? "" : loopKeys(cls, a.dur, a.stops, a.fns, a.rest);
+	const poses = [REST, ...a.stops.map(([, pose]) => pose), ...(a.reaches ?? [])];
+	ANIMS.set(cls, { family, rule, keys, poses, a, delay });
+}
+
+const seconds = (ms) => String(+(ms / 1000).toFixed(2));
+
+/** The pivot pattern: `body` in local units, turned and moved about local point (x, y). */
+function pivot(cls, [x, y], body, attrs = "") {
+	if (!x && !y) return `<g class="${cls}"${attrs}>${body}</g>`;
+	return (
+		`<g transform="translate(${f(x)} ${f(y)})"><g class="${cls}"${attrs}>` +
+		`<g transform="translate(${f(-x)} ${f(-y)})">${body}</g></g></g>`
+	);
+}
+
+/**
+ * A part that moves on its own: in the motion pass `body` is wrapped in the group that
+ * `cr-<code><figure><sub>` animates about head-space point `at`; the still draws `body` as it is.
+ */
+function moving(code, family, at, body, make, { sub = "", attrs = "" } = {}) {
+	if (!MOTION || !body) return body;
+	const cls = `cr-${code}${figure.n}${sub}`;
+	register(cls, family, make);
+	return pivot(`cr-${family} ${cls}`, at, body, attrs);
+}
+
+/** A shape that exists only in the motion layer (a glint, a note): invisible at rest. */
+function extra(code, family, at, body, make, sub = "") {
+	if (!MOTION || SIL) return "";
+	return moving(code, family, at, body, make, { sub, attrs: ' opacity="0"' });
+}
+
+const SUBS = "abcdefghij";
+
+// ------------------------------------------------------------------ the slice clock
+
+// A software-rendered browser redraws, every frame, one box round everything that changed in it,
+// with every layer inside that box. Small changes all over the band made every frame a redraw of
+// the whole band, at half the frame rate. So the crowd keeps a clock: the band is cut into
+// thirds, and each third changes only in its own turn of every 5.4 s, in the order left, right,
+// middle, so each frame redraws about a third of the band. Every change (a head move, a blink, a
+// twinkle) fits in one turn of 1.68 s, and every loop is a whole multiple of the clock, so it
+// keeps to its turns for ever.
+const CLOCK = 5400;
+const TURNS = { L: [60, 1740], R: [1860, 3540], M: [3660, 5340] };
+
+const ms10 = (lo, hi) => Math.round(between(lo, hi) / 10) * 10;
+const flip = () => (chance(0.5) ? 1 : -1);
+const sideOf = (k) => (k.x < 533 ? "L" : k.x > 1067 ? "R" : "M");
+
+/** A loop of about `lo`-`hi` ms: a whole multiple of the clock. */
+function loopLen(lo, hi) {
+	const fits = [];
+	for (let n = 1; n <= 6; n++) {
+		if (n * CLOCK >= lo - CLOCK / 4 && n * CLOCK <= hi + CLOCK / 4) fits.push(n * CLOCK);
+	}
+	return fits.length ? pick(fits) : Math.max(1, Math.round((lo + hi) / 2 / CLOCK)) * CLOCK;
+}
+
+/** Whether a change from local time `t` for `len` ms keeps to the figure's turns. */
+function inTurn(t, len, dur, lag, side = figure.side) {
+	if (t < 20 || t + len > dur - 20) return false;
+	const g = (((t - lag) % CLOCK) + CLOCK) % CLOCK;
+	return g >= TURNS[side][0] && g + len <= TURNS[side][1];
+}
+
+/**
+ * Start times, in the loop's own time, for changes `lengths` ms long in a loop of `dur` ms that
+ * runs `lag` ms ahead of the clock: one in each equal share of the loop where it can, each
+ * inside one of the figure's turns and at least `gap` ms after the one before.
+ */
+function slots(dur, lag, lengths, gap = 300, side = figure.side) {
+	const out = [];
+	let from = 20;
+	lengths.forEach((len, i) => {
+		const any = [];
+		const share = [];
+		for (let t = from; t + len <= dur - 20; t += 10) {
+			if (!inTurn(t, len, dur, lag, side)) continue;
+			any.push(t);
+			if (t >= (i * dur) / lengths.length && t < ((i + 1) * dur) / lengths.length) share.push(t);
+		}
+		const pool = share.length ? share : any;
+		if (!pool.length) return;
+		const t = pool[Math.floor(plan() * pool.length)];
+		out.push(t);
+		from = t + len + gap;
+	});
+	return out;
+}
+
+/**
+ * How far ahead of the clock a `dur` ms loop runs, picked by `u` (0-1) among the lags that keep
+ * every one of the figure's turns whole inside the loop, none of them cut by the loop's end.
+ */
+function alignedLag(dur, u, side = figure.side) {
+	const [a, b] = TURNS[side];
+	const steps = Math.floor((CLOCK - (b - a) - 40) / 10) + 1; // where a turn may start, in 10s
+	const k = Math.floor(u * steps * (dur / CLOCK));
+	return ((((20 + (k % steps) * 10 - a) % CLOCK) + CLOCK) % CLOCK) + Math.floor(k / steps) * CLOCK;
+}
+
+/** A loop for one figure's part and how far ahead of the clock it runs. */
+function cycle(lo, hi) {
+	const dur = loopLen(lo, hi);
+	return { dur, lag: alignedLag(dur, plan()) };
+}
+
+/** One change ([ms, pose] frames) placed in a `lo`-`hi` ms loop, with `extras` (fns, rest...). */
+function oneShot(lo, hi, extras, frames) {
+	const { dur, lag } = cycle(lo, hi);
+	const [t] = slots(dur, lag, [frames[frames.length - 1][0]]);
+	if (t === undefined) throw new Error(`no turn fits a ${frames[frames.length - 1][0]} ms change`);
+	return { dur, lag, stops: frames.map(([ms, ...rest]) => [t + ms, ...rest]), ...extras };
+}
+
+// ------------------------------------------------------------------ faces in motion
+
+const SHUT = P(0, 0, 0, 1, 0.08);
+
+/** When a face blinks: once (sometimes a double blink) every 5.4 s, its own way for each face. */
+function blinkPlan() {
+	plan = mulberry32(seedOf(`blink${figure.n}`));
+	const { dur, lag } = cycle(3500, 7500);
+	const double = chance(0.22);
+	const n = dur >= 6400 && chance(0.6) ? 2 : 1;
+	const starts = slots(dur, lag, Array(n).fill(double ? 680 : 280), 1400);
+	return { dur, lag, starts: starts.flatMap((t) => (double ? [t, t + 400] : [t])) };
+}
+
+/** A blink: 70 ms to shut, 110 ms held shut, 100 ms to open. */
+function blinkMake() {
+	const { dur, starts, lag } = blinkPlan();
+	const stops = starts.flatMap((t) => [
+		[t, REST],
+		[t + 70, SHUT],
+		[t + 180, SHUT],
+		[t + 280, REST],
+	]);
+	return { dur, stops, fns: "s", lag };
+}
+
+/** An idle look to one side (sometimes across to the other), `reach` head units at most. */
+function glanceMake(reach) {
+	const { dur, lag } = cycle(6000, 9500);
+	const side = flip();
+	const first = P(side * reach * between(0.85, 1), reach * between(-0.3, 0.25));
+	const frames = chance(0.3)
+		? [
+				[0, REST],
+				[360, first],
+				[760, first],
+				[1180, P(-first.x * between(0.7, 0.95), reach * between(-0.25, 0.25))],
+				[1380, null],
+				[1680, REST],
+			]
+		: [
+				[0, REST],
+				[360, first],
+				[360 + ms10(500, 900), first],
+				[0, REST],
+			];
+	if (frames.length === 4) frames[3][0] = frames[2][0] + 400;
+	else frames[4][1] = frames[3][1];
+	const [t] = slots(dur, lag, [frames[frames.length - 1][0]]);
+	const stops = frames.map(([ms, pose]) => [t + ms, pose]);
+	// while the cursor leads, the page holds the glance at rest and moves its .sf-look instead,
+	// up to `reach` any way: those poses count where the eyes can reach (for the covers)
+	const reaches = [...Array(16)].map((_, i) => {
+		const [a, r] = [(i / 16) * Math.PI * 2, reach / Math.cos(Math.PI / 16)];
+		return P(r * Math.cos(a), r * Math.sin(a));
+	});
+	return { dur, lag, stops, fns: "t", ease: SMOOTH, reaches };
+}
+
+/**
+ * The open eyes kept so far as one pair: [pivot] > blink > sf-look > glance > eyeballs and
+ * catch-lights (a shut eye squashes its catch-lights to a sliver too thin to see at page size).
+ * `reach` is the glance in head units; screen eyes keep their whites still and glance with
+ * their pupils only.
+ */
+function eyePair(reach, screen = false) {
+	const eyes = figure.eyes;
+	figure.eyes = [];
+	if (!eyes.length || SIL) return "";
+	const at = [eyes.reduce((sum, e) => sum + e.x, 0) / eyes.length, eyes[0].y];
+	const cut = eyes.map(({ markup }) => markup.indexOf("/>") + 2);
+	const balls = eyes.map(({ markup }, i) => markup.slice(0, cut[i])).join("");
+	const lights = eyes.map(({ markup }, i) => markup.slice(cut[i])).join("");
+	const blink = (body) => moving("b", "blink", at, body, blinkMake);
+	const look = (body) =>
+		`<g class="sf-look" data-look="${f(reach * figure.s)}">` +
+		`${moving("g", "glance", [0, 0], body, () => glanceMake(reach))}</g>`;
+	return screen ? blink(balls + look(lights)) : blink(look(balls + lights));
+}
+
+/** When a happy face laughs: a squeeze (sometimes two), shared by its eyes and its mouth. */
+function laughPlan() {
+	plan = mulberry32(seedOf(`laugh${figure.n}`));
+	const { dur, lag } = cycle(4000, 7500);
+	const n = dur >= 6400 && chance(0.6) ? 2 : 1;
+	return { dur, lag, starts: slots(dur, lag, Array(n).fill(820), 900) };
+}
+
+/** Eye arcs, brows and cheeks lift and squeeze about the eye line (head units). */
+function squeezeMake() {
+	const { dur, starts, lag } = laughPlan();
+	const up = P(0, -2.5, 0, 1.03, 0.97);
+	const stops = starts.flatMap((t) => [
+		[t, REST],
+		[t + 200, up],
+		[t + 520, P(0, -2.2, 0, 1.025, 0.975)],
+		[t + 820, REST],
+	]);
+	return { dur, stops, fns: "ts", lag };
+}
+
+/** A laughing mouth: three quick "ha"s about its top edge while the eyes squeeze. */
+function mouthMake() {
+	const { dur, starts, lag } = laughPlan();
+	const ha = P(0, 0.5, 0, 1.06, 1.17);
+	const half = P(0, 0.2, 0, 1.02, 1.05);
+	const stops = starts.flatMap((t) => [
+		[t, REST],
+		[t + 110, ha],
+		[t + 230, half],
+		[t + 350, ha],
+		[t + 470, half],
+		[t + 600, ha],
+		[t + 820, REST],
+	]);
+	return { dur, stops, fns: "ts", lag };
+}
+
+/** Shades (and the brows above them) nudge up a little now and then. */
+function nudgeMake() {
+	const up = P(0, -2.6, chance(0.5) ? 1.5 : -1.5);
+	return oneShot(6000, 10000, { fns: "tr" }, [
+		[0, REST],
+		[180, up, { ease: SPRING }],
+		[760, up],
+		[1000, REST],
+	]);
+}
+
+/** A streak of light slides `travel` units across a lens every few seconds, fading in and out. */
+function glintMake(travel) {
+	return oneShot(4200, 7200, { fns: "t", rest: 0 }, [
+		[0, REST, { o: 0 }],
+		[90, P(travel * 0.15), { o: 0.95 }],
+		[420, P(travel * 0.85), { o: 0.95 }],
+		[520, P(travel), { o: 0 }],
+	]);
+}
+
+/**
+ * A white glint for a lens centred on (x, y): two slanted streaks `h` tall that slide `travel`
+ * units across it. They are sized to stay inside the lens all the way, so they need no clip
+ * (a clip round a moving part would be redrawn every frame). Motion-only.
+ */
+function glint(x, y, h, travel) {
+	if (!MOTION || SIL) return "";
+	const x0 = x - 2.85 - travel / 2;
+	const bar = (x1, w) =>
+		shape(p`M${x1 + h * 0.15} ${y - h / 2}l${w} 0l${-h * 0.3} ${h}l${-w} 0Z`, W, 0);
+	return extra("s", "glint", [0, 0], bar(x0, 3) + bar(x0 + 4.5, 1.2), () => glintMake(travel));
+}
+
+/** A twinkle that pops on a pale goggle lens, where a white streak wouldn't show. */
+function twinkleMake() {
+	return oneShot(4200, 7200, { fns: "rs", rest: 0 }, [
+		[0, P(0, 0, 0, 0.2), { o: 0 }],
+		[140, P(0, 0, 30, 1.1), { o: 1 }],
+		[320, P(0, 0, 50, 0.95), { o: 1 }],
+		[500, P(0, 0, 75, 0.2), { o: 0 }],
+	]);
+}
+
+/** A small white star on a goggle lens's rim at (x, y), outlined so it reads on white too. */
+function lensTwinkle(x, y, sub) {
+	if (!MOTION || SIL) return "";
+	const star = shape(starPath(x, y, 5, 1.3, 4), W, 1.2);
+	return extra("s", "glint", [x, y], star, twinkleMake, sub);
+}
+
+const LAUGHS = new Set(["laugh", "beam"]);
+
+/** In the motion pass, a happy face's squeeze group, about the eye line at (x, y). */
+const squeeze = (body, at) => moving("q", "squeeze", at, body, squeezeMake);
+const laughing = (body, at) => moving("m", "mouth", at, body, mouthMake);
+const nudged = (body, at) => moving("n", "nudge", at, body, nudgeMake);
+
+// ------------------------------------------------------------------ trinkets in motion
+
+/** A pom-pom hops off its beanie, lands squashed and settles. */
+function pomMake() {
+	const s = flip();
+	return oneShot(3600, 6200, { fns: "trs" }, [
+		[0, REST],
+		[170, P(0, -3.4, 5 * s, 0.94, 1.06)],
+		[340, P(0, 0.3, 0, 1.12, 0.86)],
+		[500, P(0, -1.5, -3 * s, 0.98, 1.02)],
+		[650, P(0, 0, 0, 1.05, 0.95)],
+		[800, REST],
+	]);
+}
+
+/** A quick shake that dies away: rotations of `amp` degrees, `step` ms apart. */
+function shakeMake(lo, hi, amp, step, decay = [1, -0.72, 0.45, -0.22]) {
+	const s = flip();
+	const frames = [[0, REST], ...decay.map((k, i) => [(i + 1) * step, P(0, 0, amp * k * s)])];
+	frames.push([(decay.length + 1) * step, REST]);
+	return oneShot(lo, hi, { fns: "r" }, frames);
+}
+
+/** The `n` flowers of a crown bob one after another, 120 ms apart, like a wave along it. */
+function crownWave(n) {
+	plan = mulberry32(seedOf(`wave${figure.n}`));
+	const { dur, lag } = cycle(4400, 7200);
+	const [t] = slots(dur, lag, [720 + 120 * (n - 1)]);
+	return { dur, t, lag, s: flip() };
+}
+
+function flowerMake(i, n) {
+	const { dur, t, lag, s } = crownWave(n);
+	const stops = [
+		[t, REST],
+		[t + 240, P(0, -1.8, 6 * s)],
+		[t + 480, P(0, 0.5, -3 * s)],
+		[t + 720, REST],
+	];
+	const keys = i ? `cr-f${figure.n}a` : undefined;
+	return { dur, stops, fns: "tr", keys, lag: (lag - i * 120 + dur) % dur };
+}
+
+/** A music note drifts up and away from an ear cup, fading in and out, on a shared loop. */
+function noteMake(side, at, dur, lag) {
+	const dx = side * between(5, 10);
+	const turn = side * between(8, 14);
+	const stops = [
+		[at, REST, { o: 0 }],
+		[at + 200, P(dx * 0.1, -3, turn * 0.3), { o: 1 }],
+		[at + 760, P(dx * 0.45, -12, -turn * 0.4), { o: 1 }],
+		[at + 1240, P(dx * 0.8, -20, turn * 0.5), { o: 0.9 }],
+		[at + 1600, P(dx, -26, 0), { o: 0 }],
+	];
+	return { dur, stops, fns: "tr", rest: 0, lag, ease: "linear" };
+}
+
+/**
+ * An original music-note glyph with its notehead at the origin: a single quaver or a beamed
+ * pair, solid ink on a white backing so it reads over hair and the black band alike.
+ */
+function noteGlyph(pair) {
+	const heads = pair
+		? [
+				[0, 0],
+				[8, -2.4],
+			]
+		: [[0, 0]];
+	let back = "";
+	let front = "";
+	for (const [x, y] of heads) {
+		const e = `cx="${x}" cy="${y}" rx="3.4" ry="2.6" transform="rotate(-24 ${x} ${y})"`;
+		back += `<ellipse ${e} fill="${W}" stroke="${W}" stroke-width="4"/>`;
+		front += `<ellipse ${e} fill="${INK}"/>`;
+	}
+	const stems = heads.map(([x, y]) => `M${f(x + 2.9)} ${f(y - 1)}L${f(x + 2.9)} ${f(y - 13)}`);
+	back += `<path d="${stems.join("")}" fill="none" stroke="${W}" stroke-width="5.6"/>`;
+	front += `<path d="${stems.join("")}" fill="none" stroke="${INK}" stroke-width="1.6"/>`;
+	const flag = pair
+		? "M2.9 -13L10.9 -15.4L10.9 -11.6L2.9 -9.2Z"
+		: "M2.9 -13C4.5 -9.5 9.5 -9 7.5 -3.5C7.6 -7.4 5.2 -8.4 2.9 -9.4Z";
+	back += `<path d="${flag}" fill="${W}" stroke="${W}" stroke-width="4"/>`;
+	front += `<path d="${flag}" fill="${INK}"/>`;
+	return back + front;
+}
+
+/** Three notes that float out of a pair of headphones' ear cups in turn (motion-only). */
+function notes(rx, ey) {
+	if (!MOTION || SIL) return "";
+	plan = mulberry32(seedOf(`notes${figure.n}`));
+	const { dur, lag } = cycle(14500, 17000);
+	const starts = slots(dur, lag, [1600, 1600, 1600], 500);
+	const sides = [flip(), 0, 0];
+	sides[1] = -sides[0];
+	sides[2] = flip();
+	const pairs = [chance(0.5), chance(0.5), chance(0.5)];
+	return starts
+		.map((at, i) => {
+			const s = sides[i];
+			const [x, y] = [s * (rx + 15), ey - 6 - i * 3];
+			const glyph = `<g transform="translate(${f(x)} ${f(y)})">${noteGlyph(pairs[i])}</g>`;
+			return extra("t", "note", [x, y], glyph, () => noteMake(s, at, dur, lag), SUBS[i]);
+		})
+		.join("");
+}
+
+/** A sparkle at a crown point: it pops up, turns and shrinks away. */
+function sparkMake() {
+	return oneShot(3800, 7000, { fns: "rs", rest: 0 }, [
+		[0, P(0, 0, 0, 0.2), { o: 0 }],
+		[150, P(0, 0, 25, 1.1), { o: 1 }],
+		[300, P(0, 0, 45, 0.9), { o: 1 }],
+		[460, P(0, 0, 70, 0.2), { o: 0 }],
+	]);
+}
+
+/** Small four-point sparkles that twinkle by three of a paper crown's points (motion-only). */
+function sparkles(rx, k0, tips) {
+	if (!MOTION || SIL) return "";
+	plan = mulberry32(seedOf(`spark${figure.n}`));
+	const chosen = shuffle(tips.map((_, i) => i)).slice(0, 3);
+	return chosen
+		.map((i, j) => {
+			const t = tips[i];
+			const x = rx * t + 5;
+			const y = k0 - 46 - (t === 0 ? 7 : 0) + Math.abs(t) * 6;
+			const star = shape(starPath(x, y, 5.5, 1.5, 4), W, 1.4);
+			return extra("k", "spark", [x, y], star, sparkMake, SUBS[j]);
+		})
+		.join("");
+}
+
+/** A hoop earring swings as its head moves, on the head's own loop and within its turn. */
+function earringMake(side) {
+	const { dur, lag, events } = figure.head;
+	const stops = [];
+	for (const e of events) {
+		const t = e.start + 120;
+		let len = 1100;
+		while (len > 400 && !inTurn(t, len, dur, lag)) len -= 50;
+		const step = len / 5;
+		const swing = [10, -7, 4.5, -2.5].map((a, i) => [t + step * (i + 1), P(0, 0, a * side)]);
+		stops.push([t, REST], ...swing, [t + len, REST]);
+	}
+	return { dur, stops, fns: "r", lag };
+}
+
+/** A pointed hood's top sways to one side and back, like a soft cone of cloth. */
+function tipMake(side) {
+	return oneShot(5000, 8200, { fns: "r", ease: SMOOTH }, [
+		[0, REST],
+		[380, P(0, 0, 5 * side)],
+		[800, P(0, 0, -3.6 * side)],
+		[1180, P(0, 0, 1.8 * side)],
+		[1520, REST],
+	]);
+}
+
+/** An ear twitch: a flick out, a small rebound and back (sometimes twice). */
+function twitchMake(amp, side) {
+	const flick = [
+		[0, REST],
+		[70, P(0, 0, amp * side)],
+		[160, P(0, 0, -amp * 0.3 * side)],
+		[250, P(0, 0, amp * 0.5 * side)],
+		[370, REST],
+	];
+	const frames = chance(0.4)
+		? [...flick, ...flick.slice(1).map(([ms, p]) => [ms + 450, p])]
+		: flick;
+	return oneShot(4200, 8200, { fns: "r" }, frames);
+}
+
+/** A mushroom cap wobbles like jelly after a little hop. */
+function capMake() {
+	const s = flip();
+	return oneShot(5000, 8000, { fns: "trs" }, [
+		[0, REST],
+		[200, P(0, -1.2, 3.2 * s, 1.02, 0.98)],
+		[440, P(0, 0, -2.4 * s, 0.99, 1.01)],
+		[680, P(0, -0.4, 1.5 * s)],
+		[920, P(0, 0, -0.7 * s)],
+		[1160, REST],
+	]);
+}
+
+/** A frog's throat swells twice (motion-only, so it rests invisible). */
+function sacMake() {
+	const tiny = P(0, 0, 0, 0.3, 0.2);
+	return oneShot(4200, 7000, { fns: "s", rest: 0 }, [
+		[0, tiny, { o: 0 }],
+		[60, P(0, 0, 0, 0.4, 0.3), { o: 1 }],
+		[260, P(0, 0, 0, 1, 1), { o: 1 }],
+		[420, P(0, 0, 0, 0.62, 0.5), { o: 1 }],
+		[620, P(0, 0, 0, 1.06, 1.06), { o: 1 }],
+		[820, tiny, { o: 1 }],
+		[860, tiny, { o: 0 }],
+	]);
+}
+
+/** A frog's eye bulbs duck a little while its eyes blink. */
+function bulbMake() {
+	const { dur, starts, lag } = blinkPlan();
+	const dip = P(0, 0, 0, 1.04, 0.86);
+	const stops = starts.flatMap((t) => [
+		[t, REST],
+		[t + 80, dip],
+		[t + 180, dip],
+		[t + 300, REST],
+	]);
+	return { dur, stops, fns: "s", lag };
+}
+
+/** A robot screen's highlight flickers: two quick dips in brightness. */
+function flickerMake() {
+	return oneShot(3000, 6000, { fns: "", rest: 1 }, [
+		[0, REST, { o: 1 }],
+		[40, REST, { o: 0.15 }],
+		[90, REST, { o: 1 }],
+		[150, REST, { o: 0.35 }],
+		[210, REST, { o: 1 }],
+	]);
+}
+
+/** A faint scanline rolls down a robot screen now and then (motion-only). */
+function scanMake(height) {
+	return oneShot(5000, 8500, { fns: "t", rest: 0, ease: "linear" }, [
+		[0, REST, { o: 0 }],
+		[80, REST, { o: 0.75 }],
+		[900, P(0, height), { o: 0.75 }],
+		[960, P(0, height), { o: 0 }],
+	]);
 }
 
 // ------------------------------------------------------------------ faces
@@ -413,20 +1034,26 @@ function bandAid(x, y, rot) {
 	);
 }
 
-/** Eyes, brows, nose, mouth and cheek marks for a kid-type face. */
+/**
+ * Eyes, brows, nose, mouth and cheek marks for a kid-type face. The motion pass draws the same
+ * shapes in a different order, which changes nothing at rest because none of the regrouped
+ * parts overlap: shut eyes squeeze up with the brows and cheeks (and laughing mouths bounce),
+ * open eyes blink and glance as one pair, and shades push the brows up with them.
+ */
 function drawFace(h, k, hide = [false, false]) {
+	if (SIL) return "";
 	const g = faceGeo(h, k);
 	const ex = EXPRESSIONS[k.expr];
-	const out = [];
+	const cheeks = [];
 	const tone = k.skin.tone;
 	if (tone < 2 && k.cheeks) {
 		const blush = tone === 0 ? DL : DM;
 		for (const s of [-1, 1]) {
-			if (k.bandAid !== s) out.push(oval(s * (g.ex + 11), g.my - 4, 8.5, 5.4, blush));
+			if (k.bandAid !== s) cheeks.push(oval(s * (g.ex + 11), g.my - 4, 8.5, 5.4, blush));
 		}
 	}
 	if (tone >= 2) {
-		out.push(
+		cheeks.push(
 			ink(
 				p`M${-g.ex - 15} ${g.my - 9}Q${-g.ex - 11} ${g.my - 13} ${-g.ex - 5} ${g.my - 12}`,
 				2.4,
@@ -442,32 +1069,44 @@ function drawFace(h, k, hide = [false, false]) {
 				[9, -5],
 				[14, -6],
 			]) {
-				out.push(circle(s * (g.ex + dx) + g.lx * 0.5, g.my + dy, 1.05, INK));
+				cheeks.push(circle(s * (g.ex + dx) + g.lx * 0.5, g.my + dy, 1.05, INK));
 			}
 		}
 	}
+	const eyes = [];
+	const brows = [];
 	[-1, 1].forEach((s, i) => {
 		const x = s * g.ex + g.lx;
 		const kind = ex.eyes[i];
-		if (!hide[i]) out.push(blinker(kind, eye(kind, x, g.ey, g.er, g.eh, s), x, g.ey));
+		eyes.push(hide[i] ? "" : blinker(kind, eye(kind, x, g.ey, g.er, g.eh, s), x, g.ey));
 		const by = g.ey - g.eh - 8 + (ex.brow ?? 0);
-		out.push(taper(x - 7, by + 1.5, x + s * 0.5, by - 2.6, x + 7, by + 1.5, 2.6));
+		brows.push(taper(x - 7, by + 1.5, x + s * 0.5, by - 2.6, x + 7, by + 1.5, 2.6));
 	});
-	out.push(
-		ink(
-			p`M${-3 + g.lx * 0.6} ${g.ey + g.eh + 1}` +
-				p`Q${g.lx * 0.6} ${g.ey + g.eh + 4} ${3 + g.lx * 0.6} ${g.ey + g.eh + 1}`,
-			2.2,
-		),
+	const nose = ink(
+		p`M${-3 + g.lx * 0.6} ${g.ey + g.eh + 1}` +
+			p`Q${g.lx * 0.6} ${g.ey + g.eh + 4} ${3 + g.lx * 0.6} ${g.ey + g.eh + 1}`,
+		2.2,
 	);
-	out.push(mouth(ex.mouth, g.lx * 0.5, g.my));
-	if (k.bandAid) out.push(bandAid(k.bandAid * (g.ex + 12), g.my - 6, k.bandAid * -28));
-	return out.join("");
+	const lipsAt = [g.lx * 0.5, g.my];
+	const lips = mouth(ex.mouth, ...lipsAt);
+	const aid = k.bandAid ? bandAid(k.bandAid * (g.ex + 12), g.my - 6, k.bandAid * -28) : "";
+	if (!MOTION) return [...cheeks, eyes[0], brows[0], eyes[1], brows[1], nose, lips, aid].join("");
+	if (!ex.eyes.some((e) => OPEN_EYES.has(e))) {
+		const lift = squeeze([...cheeks, ...eyes, ...brows, aid].join(""), [g.lx, g.ey]);
+		return lift + nose + (LAUGHS.has(k.expr) ? laughing(lips, lipsAt) : lips);
+	}
+	const brow = k.eyewear === "shades" ? nudged(brows.join(""), shadesAt(g)) : brows.join("");
+	const reach = k.eyewear === "glasses" ? 2.6 : 3.4;
+	return cheeks.join("") + eyes.join("") + brow + nose + lips + eyePair(reach) + aid;
 }
+
+/** Where a pair of shades turns when it nudges up: the middle of its bridge. */
+const shadesAt = (g) => [g.lx, g.ey - 4];
 
 // ------------------------------------------------------------------ eyewear
 
 function eyewear(h, k) {
+	if (SIL) return "";
 	const g = faceGeo(h, k);
 	const out = [];
 	if (k.eyewear === "glasses") {
@@ -505,6 +1144,7 @@ function eyewear(h, k) {
 					W,
 				),
 			);
+			out.push(k.shadeStyle === "heart" ? glint(x, g.ey + 2, 8, 8) : glint(x, g.ey, 11, 14));
 			out.push(ink(p`M${x + s * 15} ${g.ey - 4}L${s * (h.rx - 2)} ${g.ey - 3}`, 2.8));
 		}
 		out.push(
@@ -513,6 +1153,7 @@ function eyewear(h, k) {
 				3.2,
 			),
 		);
+		return nudged(out.join(""), shadesAt(g));
 	} else if (k.eyewear === "patch") {
 		const x = g.ex + g.lx;
 		out.push(
@@ -942,7 +1583,13 @@ const HATS = {
 		for (let x = -rx - 6; x <= rx + 6; x += 6.5)
 			ribs += ink(p`M${x} ${b - 30}L${x} ${b + 12}`, 1.5);
 		const pomD = puff(0, -ry - 30, 15, 12);
-		const pom = clipped(pomD, W, 3.6, circle(8, -ry - 25, 15, DL) + circle(-3, -ry - 33, 12, W));
+		const pom = moving(
+			"p",
+			"pom",
+			[0, -ry - 16],
+			clipped(pomD, W, 3.6, circle(8, -ry - 25, 15, DL) + circle(-3, -ry - 33, 12, W)),
+			pomMake,
+		);
 		const tufts = FRINGED.has(k.hair) ? foreheadTufts(k.hairFill, b - 3) : "";
 		return { front: pom + clipped(dome, fill, 4.2, knit) + tufts + clipped(cuff, fill, 4.2, ribs) };
 	},
@@ -1041,7 +1688,10 @@ const HATS = {
 		});
 		pts.forEach(([x, y], i) => {
 			const at = `translate(${f(x)} ${f(y)}) scale(${i % 2 ? 0.78 : 1})`;
-			out += `<use href="#flower" transform="${at}"/>`;
+			const flower = `<use href="#${SIL ? "flower-sil" : "flower"}" transform="${at}"/>`;
+			out += moving("f", "flower", [x, y], flower, () => flowerMake(i, pts.length), {
+				sub: SUBS[i],
+			});
 		});
 		return { front: out };
 	},
@@ -1063,7 +1713,7 @@ const HATS = {
 			out += shape(roundRect(x - 10, g.ey - 20, 20, 42, 9), INK, 3);
 			out += ink(p`M${x - 4} ${g.ey - 12}L${x - 4} ${g.ey + 4}`, 2.4, W);
 		}
-		return { front: out };
+		return { front: out + notes(rx, g.ey) };
 	},
 	bandana(h, k) {
 		const { rx, ry } = h;
@@ -1101,8 +1751,9 @@ const HATS = {
 				PO,
 				3,
 			);
+		const flap = moving("x", "flap", k0, tails, () => shakeMake(4200, 7200, 9, 170));
 		return {
-			front: clipped(wrap, PO, 4.2, shadeIn) + tails + oval(k0[0], k0[1], 8, 7, PO, 3),
+			front: clipped(wrap, PO, 4.2, shadeIn) + flap + oval(k0[0], k0[1], 8, 7, PO, 3),
 		};
 	},
 	goggles(h) {
@@ -1120,6 +1771,7 @@ const HATS = {
 			const x = s * 17;
 			out += circle(x, g0 - 10, 14, W, 4.2);
 			out += circle(x, g0 - 10, 9.5, DL, 1.8);
+			out += lensTwinkle(x + 6, g0 - 16, SUBS[(s + 1) / 2]);
 			out += ink(p`M${x - 6} ${g0 - 12}Q${x - 4} ${g0 - 17} ${x + 1} ${g0 - 17}`, 2.4, W);
 			out += circle(x + s * 10, g0 - 19, 1.3, INK);
 		}
@@ -1166,7 +1818,24 @@ const HATS = {
 			inner += shape(starPath(x, y, r, r * 0.42, 4), W, 1.4);
 		}
 		const tip = shape(starPath(s * rx * 0.66, -ry - 64, 8, 3.6, 5), W, 2.6);
-		return { front: clipped(d, k.hatFill, 4.2, inner, true) + tip };
+		const hood = clipped(d, k.hatFill, 4.2, inner, true);
+		if (!MOTION) return { front: hood + tip };
+		// The pointed top sways about a cut across the cone: two copies of the hood, each clipped
+		// to its side of the cut (the lower one reaching a little past it, so no seam shows).
+		const cut = -ry - 30;
+		const box = (y0, y1) => {
+			uid += 1;
+			const at = `x="${f(-rx - 40)}" y="${f(y0)}" width="${f(2 * rx + 80)}" height="${f(y1 - y0)}"`;
+			return [`<clipPath id="h${uid}"><rect ${at}/></clipPath>`, `clip-path="url(#h${uid})"`];
+		};
+		const [lowClip, low] = box(cut - 1.5, ryb + 30);
+		const [topClip, top] = box(-ry - 90, cut);
+		const cone = `${topClip}<g ${top}>${clipped(d, k.hatFill, 4.2, inner, true)}</g>${tip}`;
+		return {
+			front:
+				`${lowClip}<g ${low}>${hood}</g>` +
+				moving("y", "tip", [s * rx * 0.24, cut], cone, () => tipMake(s)),
+		};
 	},
 	bucket(h, k) {
 		const { rx, ry } = h;
@@ -1216,9 +1885,9 @@ const HATS = {
 			shape("M-3 4L-11 22L-4 20L0 7Z", k.hatFill, 2.6) +
 			shape("M3 4L11 22L4 20L0 7Z", k.hatFill, 2.6) +
 			oval(0, 0, 6.5, 7.5, k.hatFill, 3);
-		return {
-			front: group(loops, `translate(${f(s * h.rx * 0.5)} ${f(-h.ry * 0.86)}) rotate(${s * 18})`),
-		};
+		const [x, y] = [s * h.rx * 0.5, -h.ry * 0.86];
+		const bow = group(loops, `translate(${f(x)} ${f(y)}) rotate(${s * 18})`);
+		return { front: moving("w", "bow", [x, y], bow, () => shakeMake(4200, 7000, 11, 150)) };
 	},
 	crown(h, k) {
 		const { rx, ry } = h;
@@ -1245,7 +1914,10 @@ const HATS = {
 			balls += circle(rx * t, k0 - 38 - (t === 0 ? 7 : 0) + Math.abs(t) * 6, 4.4, DD, 2.2);
 		});
 		return {
-			front: group(clipped(smooth(pts), W, 3.4, inner) + balls, `rotate(${k.side * 7} 0 ${f(k0)})`),
+			front: group(
+				clipped(smooth(pts), W, 3.4, inner) + balls + sparkles(rx, k0, tips),
+				`rotate(${k.side * 7} 0 ${f(k0)})`,
+			),
 		};
 	},
 	bearHood(h, k) {
@@ -1260,10 +1932,14 @@ const HATS = {
 		const orx = rx * 0.84;
 		const ory = ry * 0.88;
 		let ears = "";
-		for (const a of [232, 308]) {
+		for (const [i, a] of [232, 308].entries()) {
 			const [x, y] = headPoint(h, a, 12);
-			ears +=
+			const ear =
 				circle(x, y, 19, k.hatFill, 4.2) + circle(x, y + 1, 10, k.hatFill === DL ? DM : DL, 2.6);
+			// each ear flicks about a point inside the hood, below its centre
+			const side = i ? 1 : -1;
+			const make = () => twitchMake(10, side);
+			ears += moving("e", "ear", headPoint(h, a, -5), ear, make, { sub: SUBS[i] });
 		}
 		let inner = shape(
 			p`M${rx * 0.4} ${-ry - 40}L${rx + 40} ${-ry - 40}` +
@@ -1656,10 +2332,15 @@ function drawEars(h, k) {
 		out += ink(p`M${x + s * 1} ${g.ey}Q${x + s * 5} ${g.ey + 5} ${x + s * 1} ${g.ey + 11}`, 2);
 		if (k.earring) {
 			const y = g.ey + 17;
-			out +=
-				k.earring === "hoop"
-					? circle(x + s * 1.5, y + 3, 3.6, "none", 2)
-					: circle(x + s * 1.5, y, 2.6, INK);
+			if (k.earring !== "hoop") out += circle(x + s * 1.5, y, 2.6, INK);
+			else if (k.hat === "hood" || k.hat === "bearHood")
+				out += circle(x + s * 1.5, y + 3, 3.6, "none", 2);
+			else {
+				// a hoop swings from the earlobe; studs (and hoops under a hood) stay put
+				const hoop = circle(x + s * 1.5, y + 3, 3.6, "none", 2);
+				const sub = SUBS[(s + 1) / 2];
+				out += moving("r", "earring", [x + s * 1.5, y - 0.6], hoop, () => earringMake(s), { sub });
+			}
 		}
 	}
 	return out;
@@ -1670,6 +2351,12 @@ function drawHead(h, k, shadow = "") {
 	return clipped(headPath(h), k.skin.sh, 4.4, light + shadow);
 }
 
+// Each figure is drawn as parts in the still's order: `fixed` ones (torso, neck, collar) stay in
+// the base, and the moving ones (the head with its face and hat, and the hair hanging behind the
+// shoulders or beside them) move together in the motion layer.
+const fixed = (markup) => ({ markup, move: false });
+const moves = (markup) => ({ markup, move: true });
+
 function kid(k) {
 	const h = k.h;
 	const yn = h.ryb + 6;
@@ -1678,7 +2365,7 @@ function kid(k) {
 	const tilt = headTurn(k, h.ryb);
 	const hide =
 		k.eyewear === "shades" ? [true, true] : k.eyewear === "patch" ? [false, true] : [false, false];
-	const head = [
+	const face = [
 		drawEars(h, k),
 		hat.behind ?? "",
 		drawHead(h, k, hat.shadow),
@@ -1687,13 +2374,13 @@ function kid(k) {
 		hair.front ?? "",
 		hat.front ?? "",
 	].join("");
-	return (
-		group((hair.back ?? "") + (hat.back ?? ""), tilt) +
-		drawTorso(k, yn) +
-		drawNeck(k, h, yn) +
-		group(hair.mid ?? "", tilt) +
-		group(head, tilt)
-	);
+	return [
+		moves(group((hair.back ?? "") + (hat.back ?? ""), tilt)),
+		fixed(drawTorso(k, yn)),
+		fixed(drawNeck(k, h, yn)),
+		moves(group(hair.mid ?? "", tilt)),
+		moves(group(face, tilt)),
+	];
 }
 
 function robot(k) {
@@ -1729,19 +2416,26 @@ function robot(k) {
 	head.push(ink(p`M${s * 15} -66L${s * 17} -84Q${s * 19} -92 ${s * 32} -97`, 3.4));
 	head.push(circle(s * 34, -98, 7, DD, 3));
 	head.push(clipped(hd, W, 4.4, hIn));
-	head.push(shape(roundRect(-44, -38, 88, 64, 13), INK, 3));
-	head.push(ink("M-37 -26l9 -6M-38 -16l3.5 -2.4", 2.4, W));
+	const screen = roundRect(-44, -38, 88, 64, 13);
+	head.push(shape(screen, INK, 3));
+	// the screen's highlight flickers now and then
+	const shine = ink("M-37 -26l9 -6M-38 -16l3.5 -2.4", 2.4, W);
+	head.push(SIL ? "" : moving("o", "flicker", [0, 0], shine, flickerMake));
 	const expr = EXPRESSIONS[k.expr];
+	const arcs = [];
 	[-1, 1].forEach((side, i) => {
 		const x = side * g.ex;
 		if (expr.eyes[i] === "happy" || expr.eyes[i] === "calm") {
-			head.push(ink(p`M${x - 8} ${g.ey + 3}Q${x} ${g.ey - 11} ${x + 8} ${g.ey + 3}`, 4.2, W));
+			arcs.push(ink(p`M${x - 8} ${g.ey + 3}Q${x} ${g.ey - 11} ${x + 8} ${g.ey + 3}`, 4.2, W));
 		} else {
 			const screenEye = oval(x, g.ey, 7, 9, W) + circle(x + 2, g.ey - 3, 2.6, INK);
-			head.push(blinker("open", screenEye, x, g.ey));
+			arcs.push(blinker("open", screenEye, x, g.ey));
 		}
 	});
-	head.push(ink(p`M-9 ${g.ey + 15}Q0 ${g.ey + 23} 9 ${g.ey + 15}`, 3.4, W));
+	const happy = !expr.eyes.some((e) => OPEN_EYES.has(e));
+	head.push(happy ? squeeze(arcs.join(""), [0, g.ey]) : arcs.join(""));
+	const smile = ink(p`M-9 ${g.ey + 15}Q0 ${g.ey + 23} 9 ${g.ey + 15}`, 3.4, W);
+	head.push(LAUGHS.has(k.expr) ? laughing(smile, [0, g.ey + 15]) : smile);
 	head.push(ink(p`M-36 ${g.ey + 12}l5 0M31 ${g.ey + 12}l5 0`, 3, W));
 	for (const [x, y] of [
 		[-50, -48],
@@ -1751,8 +2445,17 @@ function robot(k) {
 		[0, -50],
 	])
 		head.push(circle(x, y, 2.4, INK));
-	out.push(group(head.join(""), headTurn(k, 50)));
-	return out.join("");
+	head.push(eyePair(2.2, true));
+	head.push(scanline());
+	const parts = out.map(fixed);
+	parts.push(moves(group(head.join(""), headTurn(k, 50))));
+	return parts;
+}
+
+/** A faint line that rolls down a robot's screen, inside its edges all the way (motion-only). */
+function scanline() {
+	if (!MOTION || SIL) return "";
+	return extra("v", "scan", [0, 0], ink("M-38 -34L38 -34", 1.6, W), () => scanMake(56));
 }
 
 function frog(k) {
@@ -1765,10 +2468,12 @@ function frog(k) {
 	);
 	const head = [];
 	const expr = EXPRESSIONS[k.expr];
-	// eye bulbs sit on the crown; the head outline crosses their lower half
+	// eye bulbs sit on the crown; the head outline crosses their lower half. They duck a little
+	// while the eyes blink.
 	for (const s of [-1, 1]) {
 		const bulb = ellipsePath(s * 31, -38, 23, 22);
-		head.push(clipped(bulb, k.skin.sh, 4.4, circle(s * 31 - 5, -42, 21, k.skin.lt)));
+		const dome = clipped(bulb, k.skin.sh, 4.4, circle(s * 31 - 5, -42, 21, k.skin.lt));
+		head.push(moving("z", "bulb", [s * 31, -24], dome, bulbMake));
 	}
 	const d =
 		p`M-66 4C-68 -22 -50 -36 -30 -32Q0 -26 30 -32` +
@@ -1795,8 +2500,13 @@ function frog(k) {
 	if (expr.mouth === "tongue" || expr.mouth === "open" || expr.mouth === "grin") {
 		head.push(shape("M-7 18C-8 30 8 30 7 18Z", W, 2.4) + ink("M0 20L0 25", 1.5));
 	}
-	out.push(group(head.join(""), headTurn(k, 50)));
-	return out.join("");
+	head.push(eyePair(4));
+	// a throat sac swells under the smile now and then
+	const sac = oval(0, 41, 17, 10, DL, 2.6) + ink("M-9 37Q-4 33 3 34", 2, W);
+	head.push(extra("u", "sac", [0, 33], sac, sacMake));
+	const parts = out.map(fixed);
+	parts.push(moves(group(head.join(""), headTurn(k, 50))));
+	return parts;
 }
 
 function fox(k) {
@@ -1824,28 +2534,29 @@ function fox(k) {
 	];
 	const g = faceGeo(h, k);
 	const ears = [];
-	for (const s of [-1, 1]) {
+	for (const [i, s] of [-1, 1].entries()) {
 		const outer = smooth([
 			[s * 22, -50],
 			[s * 46, -104, true],
 			[s * 63, -34],
 		]);
-		ears.push(
-			clipped(
-				outer,
-				HA,
-				4.2,
-				shape(
-					smooth([
-						[s * 30, -52],
-						[s * 45, -90, true],
-						[s * 55, -42],
-					]),
-					DD,
-					2.4,
-				) + shape(p`M${s * 20} -84L${s * 70} -84L${s * 70} -120L${s * 20} -120Z`, INK, 0),
-			),
+		const ear = clipped(
+			outer,
+			HA,
+			4.2,
+			shape(
+				smooth([
+					[s * 30, -52],
+					[s * 45, -90, true],
+					[s * 55, -42],
+				]),
+				DD,
+				2.4,
+			) + shape(p`M${s * 20} -84L${s * 70} -84L${s * 70} -120L${s * 20} -120Z`, INK, 0),
 		);
+		// each ear twitches about its root, hidden under the head
+		const make = () => twitchMake(8, s);
+		ears.push(moving("e", "ear", [s * 42, -40], ear, make, { sub: SUBS[i] }));
 	}
 	const top = g.ey - g.eh - 6;
 	const mask =
@@ -1858,28 +2569,33 @@ function fox(k) {
 	const head = [ears.join(""), clipped(smooth(pts), HA, 4.4, inner)];
 	head.push(ink("M-60 24l8 -2M-62 32l7 0M60 24l-8 -2M62 32l-7 0", 1.6));
 	const expr = EXPRESSIONS[k.expr];
+	const eyes = [];
 	for (const [i, s] of [-1, 1].entries()) {
 		const x = s * g.ex + g.lx;
-		head.push(blinker(expr.eyes[i], eye(expr.eyes[i], x, g.ey, g.er, g.eh, s), x, g.ey));
+		eyes.push(blinker(expr.eyes[i], eye(expr.eyes[i], x, g.ey, g.er, g.eh, s), x, g.ey));
 	}
+	const cheeks = oval(-g.ex - 11, g.my - 2, 8, 5, DL) + oval(g.ex + 11, g.my - 2, 8, 5, DL);
+	// shut eyes squeeze up with the cheeks (which the still draws last; nothing overlaps them)
+	const happy = MOTION && !expr.eyes.some((e) => OPEN_EYES.has(e));
+	head.push(happy ? squeeze(eyes.join("") + cheeks, [g.lx, g.ey]) : eyes.join(""));
 	const ny = g.ey + g.eh + 4;
 	head.push(
 		shape(p`M-7 ${ny}Q0 ${ny - 3} 7 ${ny}Q4 ${ny + 7} 0 ${ny + 8}Q-4 ${ny + 7} -7 ${ny}Z`, INK, 0),
 	);
 	head.push(oval(-2.4, ny + 0.5, 2, 1.2, W));
-	head.push(
-		ink(
-			p`M0 ${ny + 8}L0 ${ny + 11}M-8 ${ny + 13}` +
-				p`Q-4 ${ny + 17} 0 ${ny + 11}Q4 ${ny + 17} 8 ${ny + 13}`,
-			2.4,
-		),
+	const lips = ink(
+		p`M0 ${ny + 8}L0 ${ny + 11}M-8 ${ny + 13}` +
+			p`Q-4 ${ny + 17} 0 ${ny + 11}Q4 ${ny + 17} 8 ${ny + 13}`,
+		2.4,
 	);
-	head.push(oval(-g.ex - 11, g.my - 2, 8, 5, DL) + oval(g.ex + 11, g.my - 2, 8, 5, DL));
+	head.push(LAUGHS.has(k.expr) ? laughing(lips, [0, ny + 9]) : lips);
+	head.push(happy ? "" : cheeks);
+	head.push(eyePair(3.4));
 	const torso =
 		drawTorso(k, yn) +
 		clipped(p`M-13 40L-13.5 ${yn + 2}Q0 ${yn + 10} 13.5 ${yn + 2}L13 40Z`, HA, 3.4, "") +
 		scarf(yn, k);
-	return torso + group(head.join(""), headTurn(k, h.ryb));
+	return [fixed(torso), moves(group(head.join(""), headTurn(k, h.ryb)))];
 }
 
 function shroom(k) {
@@ -1937,17 +2653,25 @@ function shroom(k) {
 			),
 		),
 		drawFace(h, k),
-		shape(p`M-2 ${-ry - 56}Q-4 ${-ry - 70} 2 ${-ry - 76}`, "none", 2.6),
-		shape(
-			p`M2 ${-ry - 76}C10 ${-ry - 86} 24 ${-ry - 82} 26 ${-ry - 72}` +
-				p`C16 ${-ry - 66} 6 ${-ry - 68} 2 ${-ry - 76}Z`,
-			DM,
-			2.4,
+		// the cap wobbles with the sprout growing out of it
+		moving(
+			"c",
+			"cap",
+			[0, c0 + 8],
+			shape(p`M-2 ${-ry - 56}Q-4 ${-ry - 70} 2 ${-ry - 76}`, "none", 2.6) +
+				shape(
+					p`M2 ${-ry - 76}C10 ${-ry - 86} 24 ${-ry - 82} 26 ${-ry - 72}` +
+						p`C16 ${-ry - 66} 6 ${-ry - 68} 2 ${-ry - 76}Z`,
+					DM,
+					2.4,
+				) +
+				clipped(cap, DM, 4.4, capIn),
+			capMake,
 		),
-		clipped(cap, DM, 4.4, capIn),
 	];
-	out.push(group(head.join(""), headTurn(k, h.ryb)));
-	return out.join("");
+	const parts = out.map(fixed);
+	parts.push(moves(group(head.join(""), headTurn(k, h.ryb))));
+	return parts;
 }
 
 // ------------------------------------------------------------------ casting
@@ -2262,168 +2986,1060 @@ function describe(k) {
 	return [k.hat ?? "bare", k.hair, k.eyewear, k.expr].filter(Boolean).join(", ");
 }
 
+// ------------------------------------------------------------------ head moves
+
+// Each head plays one or two short moves in a loop of 7-13 s, about its neck point, in root
+// units and degrees. A move lists [fraction of its length, pose] after resting at 0.
+const HEAD_MOVES = {
+	tilt(s) {
+		const a = s * between(3, 5);
+		return [
+			[0.3, P(0, 0, a)],
+			[0.5, P(0, 0, a * 0.9)],
+			[0.72, P(0, 0, a * 0.95)],
+		];
+	},
+	nod: (s) => [
+		[0.18, P(0, 2.6, s * 0.8)],
+		[0.36, P(0, 0.3, 0)],
+		[0.54, P(0, 2.2, s * 0.6)],
+		[0.76, REST],
+	],
+	bounce() {
+		const up = -between(4, 6);
+		return [
+			[0.12, P(0, 1.2)],
+			[0.38, P(0, up)],
+			[0.62, P(0, 1)],
+			[0.8, P(0, -0.6)],
+		];
+	},
+	look: (s) => [
+		[0.2, P(3 * s, 0, 2 * s)],
+		[0.42, P(3 * s, 0, 2 * s)],
+		[0.62, P(-3 * s, 0, -2 * s)],
+		[0.82, P(-3 * s, 0, -2 * s)],
+	],
+	giggle: (s) => [
+		[0.12, P(0, -2, -1.2 * s)],
+		[0.26, P(0, 0.4)],
+		[0.4, P(0, -2, 1.2 * s)],
+		[0.54, P(0, 0.4)],
+		[0.68, P(0, -1.2, -0.6 * s)],
+		[0.84, REST],
+	],
+	doubleTake: (s) => [
+		[0.12, P(1.6 * s, 0, 1.5 * s)],
+		[0.24, REST],
+		[0.42, REST],
+		[0.5, P(3.4 * s, -1.4, 4.2 * s)],
+		[0.58, P(3 * s, -0.8, 3.6 * s)],
+		[0.82, P(3 * s, -0.8, 3.6 * s)],
+	],
+};
+// Every move fits in one turn of the clock (see the slice clock above).
+const MOVE_MS = {
+	tilt: [1300, 1660],
+	nod: [1200, 1500],
+	bounce: [1200, 1400],
+	look: [1400, 1660],
+	giggle: [1200, 1450],
+	doubleTake: [1400, 1660],
+};
+
+const moveAt = (moves, t) => moves.some((m) => t >= m.start && t < m.start + m.ms);
+
+/**
+ * Picks every head's moves and loop, then spreads the loops' phases so that about the same
+ * number of heads move at any moment: each head in turn takes, from 24 candidate phases (each
+ * with its moves placed in the turns that phase gives it), the one that adds least to the squared
+ * count of heads already moving over the first four minutes.
+ */
+function planHeads(crowd) {
+	const plans = crowd.map((k, n) => {
+		figure = { n, side: sideOf(k) };
+		plan = mulberry32(seedOf(`head${n}`));
+		const kinds = shuffle(Object.keys(HEAD_MOVES));
+		const moves = kinds.slice(0, chance(0.08) ? 2 : 1).map((type) => ({
+			type,
+			ms: ms10(...MOVE_MS[type]),
+			frames: HEAD_MOVES[type](flip()),
+		}));
+		return { side: figure.side, dur: loopLen(7000, 13000), moves };
+	});
+	plan = mulberry32(SEED + 5);
+	const STEP = 100;
+	const load = new Float64Array(240000 / STEP);
+	for (const n of shuffle(plans.map((_, i) => i))) {
+		const p = plans[n];
+		let best = null;
+		for (let c = 0; c < 24; c++) {
+			const lag = alignedLag(p.dur, (c + plan()) / 24, p.side);
+			const starts = slots(
+				p.dur,
+				lag,
+				p.moves.map((m) => m.ms),
+				1500,
+				p.side,
+			);
+			const moves = starts.map((start, i) => ({ ...p.moves[i], start }));
+			let cost = 0;
+			for (let b = 0; b < load.length; b++) {
+				if (moveAt(moves, (b * STEP + lag) % p.dur)) cost += 2 * load[b] + 1;
+			}
+			// a phase that leaves a move out only wins when none fits them all
+			cost += (p.moves.length - moves.length) * 1e9;
+			if (moves.length && (!best || cost < best.cost)) best = { lag, moves, cost };
+		}
+		p.lag = best.lag;
+		p.moves = best.moves;
+		for (let b = 0; b < load.length; b++)
+			if (moveAt(p.moves, (b * STEP + p.lag) % p.dur)) load[b]++;
+	}
+	crowd.forEach((k, n) => {
+		const { dur, lag, moves } = plans[n];
+		k.move = { dur, lag, events: moves.map(({ type, start, ms }) => ({ type, start, ms })) };
+		const stops = moves.flatMap((m) => [
+			[m.start, REST],
+			...m.frames.map(([at, pose]) => [m.start + Math.round(at * m.ms), pose]),
+			[m.start + m.ms, REST],
+		]);
+		figure = { n, side: sideOf(k) };
+		register(`cr-h${n}`, "head", () => ({ dur, stops, fns: "tr", lag }));
+	});
+	return plans;
+}
+
+/** How many heads move at each tenth of a second over `secs` seconds (for the report). */
+function headLoad(plans, secs) {
+	const counts = [];
+	for (let t = 0; t < secs * 1000; t += 100) {
+		counts.push(plans.filter((p) => moveAt(p.moves, (t + p.lag) % p.dur)).length);
+	}
+	return counts;
+}
+
+// ------------------------------------------------------------------ reach
+
+// To keep the right shapes in front of a moving head, the motion layer needs to know how far
+// every part can reach. A small evaluator walks the markup this file writes (paths, circles,
+// ellipses, rects, uses, groups with transforms, clip paths) and returns its box in root units,
+// taking every animated group through each pose of its keyframes.
+
+const NONE = [Infinity, Infinity, -Infinity, -Infinity];
+const isEmpty = (b) => !(b[0] < b[2] && b[1] < b[3]);
+const hasPoints = (b) => b[0] <= b[2] && b[1] <= b[3];
+const join = (a, b) => [
+	Math.min(a[0], b[0]),
+	Math.min(a[1], b[1]),
+	Math.max(a[2], b[2]),
+	Math.max(a[3], b[3]),
+];
+const meet = (a, b) => [
+	Math.max(a[0], b[0]),
+	Math.max(a[1], b[1]),
+	Math.min(a[2], b[2]),
+	Math.min(a[3], b[3]),
+];
+const grow = (b, m) => [b[0] - m, b[1] - m, b[2] + m, b[3] + m];
+
+// 2D affine matrices [a, b, c, d, e, f]: x' = a x + c y + e, y' = b x + d y + f
+const ID = [1, 0, 0, 1, 0, 0];
+const mul = (m, n) => [
+	m[0] * n[0] + m[2] * n[1],
+	m[1] * n[0] + m[3] * n[1],
+	m[0] * n[2] + m[2] * n[3],
+	m[1] * n[2] + m[3] * n[3],
+	m[0] * n[4] + m[2] * n[5] + m[4],
+	m[1] * n[4] + m[3] * n[5] + m[5],
+];
+const apply = (m, [x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+const scaleOf = (m) => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+
+function parseTransform(text = "") {
+	let m = ID;
+	for (const [, fn, args] of text.matchAll(/(\w+)\(([^)]*)\)/g)) {
+		const v = args
+			.split(/[\s,]+/)
+			.filter(Boolean)
+			.map(Number);
+		if (fn === "translate") m = mul(m, [1, 0, 0, 1, v[0], v[1] ?? 0]);
+		else if (fn === "scale") m = mul(m, [v[0], 0, 0, v[1] ?? v[0], 0, 0]);
+		else if (fn === "rotate") {
+			const a = (v[0] * Math.PI) / 180;
+			const [cx = 0, cy = 0] = v.slice(1);
+			m = mul(m, [1, 0, 0, 1, cx, cy]);
+			m = mul(m, [Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), 0, 0]);
+			m = mul(m, [1, 0, 0, 1, -cx, -cy]);
+		} else if (fn === "matrix") m = mul(m, v);
+	}
+	return m;
+}
+
+/** Points on an SVG arc from (x1, y1) to (x2, y2) (endpoint parameterisation, sampled). */
+function arcPoints(x1, y1, rx, ry, phi, large, sweep, x2, y2, out) {
+	out.push([x2, y2]);
+	rx = Math.abs(rx);
+	ry = Math.abs(ry);
+	if (!rx || !ry) return;
+	const a = (phi * Math.PI) / 180;
+	const [ca, sa] = [Math.cos(a), Math.sin(a)];
+	const [dx, dy] = [(x1 - x2) / 2, (y1 - y2) / 2];
+	const [xp, yp] = [ca * dx + sa * dy, -sa * dx + ca * dy];
+	const fit = (xp * xp) / (rx * rx) + (yp * yp) / (ry * ry);
+	if (fit > 1) [rx, ry] = [rx * Math.sqrt(fit), ry * Math.sqrt(fit)];
+	const top = rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp;
+	let k = Math.sqrt(Math.max(0, top / (rx * rx * yp * yp + ry * ry * xp * xp)));
+	if (large === sweep) k = -k;
+	const [cxp, cyp] = [(k * rx * yp) / ry, (-k * ry * xp) / rx];
+	const cx = ca * cxp - sa * cyp + (x1 + x2) / 2;
+	const cy = sa * cxp + ca * cyp + (y1 + y2) / 2;
+	const angle = (ux, uy, vx, vy) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+	const t1 = angle(1, 0, (xp - cxp) / rx, (yp - cyp) / ry);
+	let dt = angle((xp - cxp) / rx, (yp - cyp) / ry, (-xp - cxp) / rx, (-yp - cyp) / ry);
+	if (!sweep && dt > 0) dt -= 2 * Math.PI;
+	else if (sweep && dt < 0) dt += 2 * Math.PI;
+	for (let i = 1; i < 24; i++) {
+		const t = t1 + (dt * i) / 24;
+		const [ex, ey] = [rx * Math.cos(t), ry * Math.sin(t)];
+		out.push([cx + ca * ex - sa * ey, cy + sa * ex + ca * ey]);
+	}
+}
+
+/** Every end and control point of path data `d` (a curve stays inside their hull). */
+function pathPoints(d) {
+	const tok = d.match(/[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g) ?? [];
+	const pts = [];
+	let [i, cmd, x, y, sx, sy] = [0, "", 0, 0, 0, 0];
+	const num = () => Number(tok[i++]);
+	while (i < tok.length) {
+		if (/[A-Za-z]/.test(tok[i])) cmd = tok[i++];
+		const rel = cmd === cmd.toLowerCase();
+		const [ox, oy] = rel ? [x, y] : [0, 0];
+		switch (cmd.toUpperCase()) {
+			case "Z":
+				[x, y] = [sx, sy];
+				break;
+			case "M":
+				[x, y] = [ox + num(), oy + num()];
+				[sx, sy] = [x, y];
+				pts.push([x, y]);
+				cmd = rel ? "l" : "L";
+				break;
+			case "L":
+			case "T":
+				[x, y] = [ox + num(), oy + num()];
+				pts.push([x, y]);
+				break;
+			case "H":
+				x = ox + num();
+				pts.push([x, y]);
+				break;
+			case "V":
+				y = oy + num();
+				pts.push([x, y]);
+				break;
+			case "C":
+			case "S":
+			case "Q": {
+				const n = cmd.toUpperCase() === "C" ? 3 : 2;
+				for (let j = 0; j < n; j++) pts.push([ox + num(), oy + num()]);
+				[x, y] = pts[pts.length - 1];
+				break;
+			}
+			case "A": {
+				const [rx, ry, phi, large, sweep] = [num(), num(), num(), num(), num()];
+				const [ex, ey] = [ox + num(), oy + num()];
+				arcPoints(x, y, rx, ry, phi, large, sweep, ex, ey, pts);
+				[x, y] = [ex, ey];
+				break;
+			}
+			default:
+				i++;
+		}
+	}
+	return pts;
+}
+
+/** A tree of the elements in `text` (just tags and attributes, with their source spans). */
+function parseSvg(text) {
+	const root = { tag: "#root", attrs: {}, kids: [], start: 0, end: text.length };
+	const stack = [root];
+	for (const m of text.matchAll(/<(\/?)([a-zA-Z]+)((?:\s+[\w:-]+="[^"]*")*)\s*(\/?)>/g)) {
+		const [all, close, tag, rest, self] = m;
+		if (close) {
+			stack.pop().end = m.index + all.length;
+			continue;
+		}
+		const attrs = {};
+		for (const [, key, value] of rest.matchAll(/([\w:-]+)="([^"]*)"/g)) attrs[key] = value;
+		const node = { tag, attrs, kids: [], start: m.index, open: all };
+		stack[stack.length - 1].kids.push(node);
+		if (self) node.end = m.index + all.length;
+		else stack.push(node);
+	}
+	return root;
+}
+
+function idsOf(node, ids = new Map()) {
+	if (node.attrs.id) ids.set(node.attrs.id, node);
+	for (const kid of node.kids) idsOf(kid, ids);
+	return ids;
+}
+
+const HIDDEN = new Set(["defs", "clipPath", "pattern", "filter", "mask", "style", "title"]);
+
+/** Each animation's poses as matrices, a little exaggerated to allow for in-between frames. */
+function posesOf(cls) {
+	for (const name of (cls ?? "").split(" ")) {
+		const anim = ANIMS.get(name);
+		if (!anim) continue;
+		const more = (v, rest) => rest + (v - rest) * 1.15;
+		return anim.poses.map((p) =>
+			parseTransform(
+				`translate(${more(p.x, 0)} ${more(p.y, 0)}) rotate(${more(p.r, 0)}) ` +
+					`scale(${more(p.sx, 1)} ${more(p.sy, 1)})`,
+			),
+		);
+	}
+	return null;
+}
+
+/** The box (root units) that `node` paints under matrix `m`, through all its poses. */
+function reach(node, m, ids, paint = { sw: 0, stroke: false }) {
+	const a = node.attrs;
+	if (HIDDEN.has(node.tag)) return NONE;
+	const local = a.transform ? mul(m, parseTransform(a.transform)) : m;
+	const own = {
+		sw: a["stroke-width"] !== undefined ? Number(a["stroke-width"]) : paint.sw,
+		stroke: a.stroke !== undefined ? a.stroke !== "none" : paint.stroke,
+	};
+	const poses = posesOf(a.class);
+	if (poses) {
+		const bare = { ...node, attrs: { ...a, class: "", transform: "" } };
+		return poses.reduce((b, pm) => join(b, reach(bare, mul(local, pm), ids, own)), NONE);
+	}
+	let box = NONE;
+	const add = (pts) => {
+		for (const pt of pts) {
+			const [x, y] = apply(local, pt);
+			box = join(box, [x, y, x, y]);
+		}
+	};
+	const n = (key) => Number(a[key] ?? 0);
+	switch (node.tag) {
+		case "path":
+			add(pathPoints(a.d ?? ""));
+			break;
+		case "circle":
+		case "ellipse": {
+			const [rx, ry] = node.tag === "circle" ? [n("r"), n("r")] : [n("rx"), n("ry")];
+			const pts = [];
+			for (let i = 0; i < 16; i++) {
+				const t = (i / 16) * Math.PI * 2;
+				pts.push([
+					n("cx") + (rx / Math.cos(Math.PI / 16)) * Math.cos(t),
+					n("cy") + (ry / Math.cos(Math.PI / 16)) * Math.sin(t),
+				]);
+			}
+			add(pts);
+			break;
+		}
+		case "rect":
+			add([
+				[n("x"), n("y")],
+				[n("x") + n("width"), n("y") + n("height")],
+				[n("x"), n("y") + n("height")],
+				[n("x") + n("width"), n("y")],
+			]);
+			break;
+		case "use": {
+			const target = ids.get((a.href ?? "").slice(1));
+			if (target) box = reach(target, local, ids, own);
+			break;
+		}
+		default:
+			for (const kid of node.kids) box = join(box, reach(kid, local, ids, own));
+	}
+	if (own.stroke && hasPoints(box) && ["path", "circle", "ellipse", "rect"].includes(node.tag)) {
+		box = grow(box, (own.sw / 2) * scaleOf(local));
+	}
+	const clip = /url\(#([^)]+)\)/.exec(a["clip-path"] ?? "");
+	if (clip && ids.has(clip[1])) {
+		const shape = ids.get(clip[1]).kids.reduce((b, kid) => join(b, reach(kid, local, ids)), NONE);
+		box = meet(box, shape);
+	}
+	return box;
+}
+
+// ------------------------------------------------------------------ filters at the leaves
+
+// Chromium moves animated SVG groups as compositor layers. A filter (or clip) with an animated
+// group inside it becomes a render surface that is filtered again on every frame, which cost
+// most of the frame budget. So no filter ever holds a moving part: each run of shapes that holds
+// none gets its own filter, and the animated groups between them stay bare. A moving part's
+// filters work in its own frame: the shipped files have the wobble baked into every shape's own
+// coordinates (tools/bake.mjs), where the frame makes no difference, so this saves the pair of
+// matrices that mapping each run back to root space would cost. The white outlines are still
+// mapped back, as their viewports cut them off along the band.
+
+const invert = ([a, b, c, d, e, g]) => {
+	const det = a * d - b * c;
+	return [d / det, -b / det, -c / det, a / det, (c * g - d * e) / det, (b * e - a * g) / det];
+};
+const matrix = (m) => `matrix(${m.map((v) => +v.toFixed(6)).join(" ")})`;
+const isId = (m) => m.every((v, i) => Math.abs(v - ID[i]) < 1e-9);
+
+const inkRun = (body) => `<g filter="url(#ink)">${body}</g>`;
+// true maps every moving run back to root space too, so the unbaked files' wobble matches the
+// still's at rest (about 41 KB more); the shipped, baked files don't need it
+const ROOT_INK = false;
+
+// shapes that exist only in the motion layer: drawn clean, with no filter (or layer) of their own
+const EXTRAS = new Set(["note", "glint", "spark", "sac", "scan"]);
+const animated = (node) =>
+	node.attrs.class?.split(" ").some((c) => c === "sf-look" || ANIMS.has(c)) ?? false;
+const familyOf = (node) => /\bcr-([a-z]+) cr-/.exec(node.attrs.class ?? "")?.[1];
+
+/**
+ * `markup` (root space) with every run of still shapes wrapped by `wrap(body, run, ctm)`, in the
+ * run's own frame, or with `root` in root space at rest: `body` is then the run under its matrix
+ * `ctm`, mapped back out again round the wrap.
+ */
+function pushFilters(markup, wrap, root = false) {
+	const tree = parseSvg(markup);
+	const moves = (node) => (node.moves ??= animated(node) || node.kids.some(moves));
+	const walk = (nodes, ctm, bare = false) => {
+		let out = "";
+		let run = [];
+		const flush = () => {
+			const body = run.map((node) => markup.slice(node.start, node.end)).join("");
+			if (!bare && run.some((node) => !HIDDEN.has(node.tag))) {
+				out +=
+					!root || isId(ctm)
+						? wrap(body, run, ctm)
+						: `<g transform="${matrix(invert(ctm))}">` +
+							wrap(`<g transform="${matrix(ctm)}">${body}</g>`, run, ctm) +
+							"</g>";
+			} else out += body;
+			run = [];
+		};
+		for (const node of nodes) {
+			if (!moves(node)) {
+				run.push(node);
+				continue;
+			}
+			flush();
+			const m = node.attrs.transform ? mul(ctm, parseTransform(node.attrs.transform)) : ctm;
+			out += node.open + walk(node.kids, m, bare || EXTRAS.has(familyOf(node))) + `</${node.tag}>`;
+		}
+		flush();
+		return out;
+	};
+	return walk(tree.kids, ID);
+}
+
+/** Consecutive top-level groups with the same transform (a head's hair and face) as one group. */
+function joinTilts(markup) {
+	const kids = parseSvg(markup).kids;
+	let out = "";
+	for (let i = 0; i < kids.length; i++) {
+		const k = kids[i];
+		const inner = (n) => markup.slice(n.start + n.open.length, n.end - 4);
+		if (k.tag !== "g" || !k.attrs.transform) {
+			out += markup.slice(k.start, k.end);
+			continue;
+		}
+		let body = inner(k);
+		while (kids[i + 1]?.tag === "g" && kids[i + 1].open === k.open) body += inner(kids[++i]);
+		out += k.open + body + "</g>";
+	}
+	return out;
+}
+
+/**
+ * `markup` (figure space, under matrix `m`) with each moving part taken as late in its group as
+ * it can go: past every still shape after it that it can't touch, wherever it moves. Then fewer
+ * still shapes follow a moving part, and those that do each need a compositor layer of their own.
+ */
+function floatUp(markup, m, ids) {
+	const tree = parseSvg(markup);
+	const pure = (node) =>
+		animated(node) ||
+		(node.kids.length > 0 && node.kids.every((kid) => HIDDEN.has(kid.tag) || pure(kid)));
+	const still = (node) => !node.kids.some((kid) => animated(kid) || !still(kid)) && !animated(node);
+	let out = "";
+	for (const group of tree.kids) {
+		const text = (node) => markup.slice(node.start, node.end);
+		if (group.tag !== "g" || !group.kids.some(pure)) {
+			out += text(group);
+			continue;
+		}
+		const ctm = mul(m, parseTransform(group.attrs.transform));
+		const boxes = new Map();
+		const shapes = new Map();
+		const boxesOf = (node) =>
+			boxes.get(node) ?? boxes.set(node, leafBoxes(node, [ctm], ids)).get(node);
+		const shapesOf = (node) =>
+			shapes.get(node) ?? shapes.set(node, outlines(node, ctm, ids)).get(node);
+		// a moving part may pass a still shape when none of its boxes touch that shape's outline;
+		// a shape that itself holds moving parts is only passed when their boxes stay apart
+		const apart = (a, b) =>
+			still(b)
+				? boxesOf(a).every((r) => shapesOf(b).every((sh) => !touches(r, sh)))
+				: boxesOf(a).every((r) => boxesOf(b).every((q) => isEmpty(meet(r, q))));
+		const order = [...group.kids];
+		for (let changed = true; changed; ) {
+			changed = false;
+			for (let i = order.length - 2; i >= 0; i--) {
+				const [a, b] = [order[i], order[i + 1]];
+				if (pure(a) && !pure(b) && apart(a, b)) {
+					[order[i], order[i + 1]] = [b, a];
+					changed = true;
+				}
+			}
+		}
+		// neighbours that now share one animated group (shades and the brows above them) become one
+		const merged = [];
+		for (const node of order) {
+			const last = merged[merged.length - 1];
+			const wrap = (n) => pivotParts(markup, n);
+			if (last && pure(node) && pure(last.node) && wrap(node) && wrap(node).open === last.open) {
+				last.body += wrap(node).body;
+				continue;
+			}
+			const w = pure(node) ? wrap(node) : null;
+			merged.push(w ? { node, ...w } : { node, text: text(node) });
+		}
+		out += group.open + merged.map((x) => x.text ?? x.open + x.body + x.close).join("") + "</g>";
+	}
+	return out;
+}
+
+/** A pivot-pattern group split into its opening tags, its body and its closing tags. */
+function pivotParts(markup, node) {
+	const one = (n) => n.kids.length === 1 && n.kids[0];
+	const inner = animated(node) ? node : one(node);
+	if (!inner || !animated(inner)) return null;
+	const back = inner === node ? null : one(inner);
+	const body = back ?? inner;
+	if (inner !== node && (!back || back.tag !== "g")) return null;
+	const open = markup.slice(node.start, body.start + body.open.length);
+	const close = markup.slice(body.end - 4, node.end);
+	return { open, close, body: markup.slice(body.start + body.open.length, body.end - 4) };
+}
+
+// ------------------------------------------------------------------ overlap
+
+// Whether a moving part can touch a still shape: the part as small boxes, one per shape and
+// through every pose, the still shape as its real outline (filled polygons, stroked lines), so an
+// eye can pass a hair cap above it, or a pair of glasses around it, without touching either.
+
+const TOUCH = 3.5; // both shapes' ink wobble, plus antialiasing
+
+/** One box per leaf shape of `node` through every pose of its animated groups, under `ms`. */
+function leafBoxes(node, ms, ids, paint = { sw: 0, stroke: false }, out = []) {
+	const a = node.attrs;
+	if (HIDDEN.has(node.tag)) return out;
+	let mats = a.transform ? ms.map((m) => mul(m, parseTransform(a.transform))) : ms;
+	const poses = posesOf(a.class);
+	if (poses) mats = mats.flatMap((m) => poses.map((pm) => mul(m, pm)));
+	const own = {
+		sw: a["stroke-width"] !== undefined ? Number(a["stroke-width"]) : paint.sw,
+		stroke: a.stroke !== undefined ? a.stroke !== "none" : paint.stroke,
+	};
+	if (node.tag === "g" || node.tag === "svg") {
+		for (const kid of node.kids) leafBoxes(kid, mats, ids, own, out);
+	} else if (node.tag === "use") {
+		const target = ids.get((a.href ?? "").slice(1));
+		if (target) leafBoxes(target, mats, ids, own, out);
+	} else {
+		const bare = { ...node, attrs: { ...a, transform: "", class: "" } };
+		const box = mats.reduce((b, m) => join(b, reach(bare, m, ids, own)), NONE);
+		if (hasPoints(box)) out.push(grow(box, TOUCH));
+	}
+	return out;
+}
+
+/** Path data as polylines, its curves sampled, each with whether it closes. */
+function flatten(d) {
+	const tok = d.match(/[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g) ?? [];
+	const subs = [];
+	let sub = null;
+	let [i, cmd, x, y] = [0, "", 0, 0];
+	const num = () => Number(tok[i++]);
+	const to = (px, py) => {
+		sub.pts.push([px, py]);
+		[x, y] = [px, py];
+	};
+	while (i < tok.length) {
+		if (/[A-Za-z]/.test(tok[i])) cmd = tok[i++];
+		const rel = cmd === cmd.toLowerCase();
+		const [ox, oy] = rel ? [x, y] : [0, 0];
+		const C = cmd.toUpperCase();
+		if (C === "M") {
+			[x, y] = [ox + num(), oy + num()];
+			sub = { pts: [[x, y]], closed: false };
+			subs.push(sub);
+			cmd = rel ? "l" : "L";
+		} else if (C === "Z") {
+			sub.closed = true;
+			[x, y] = sub.pts[0];
+		} else if (C === "L" || C === "T") to(ox + num(), oy + num());
+		else if (C === "H") to(ox + num(), y);
+		else if (C === "V") to(x, oy + num());
+		else if (C === "C" || C === "S" || C === "Q") {
+			const n = C === "C" ? 3 : 2;
+			const pts = [[x, y]];
+			for (let j = 0; j < n; j++) pts.push([ox + num(), oy + num()]);
+			for (let s = 1; s <= 8; s++) {
+				const t = s / 8;
+				const c =
+					n === 3
+						? [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3]
+						: [(1 - t) ** 2, 2 * (1 - t) * t, t * t];
+				sub.pts.push([0, 1].map((k) => pts.reduce((sum, p, j) => sum + p[k] * c[j], 0)));
+			}
+			[x, y] = pts[n];
+		} else if (C === "A") {
+			const [rx, ry, phi, large, sweep] = [num(), num(), num(), num(), num()];
+			const [ex, ey] = [ox + num(), oy + num()];
+			const arc = [];
+			arcPoints(x, y, rx, ry, phi, large, sweep, ex, ey, arc);
+			sub.pts.push(...arc.slice(1), arc[0]);
+			[x, y] = [ex, ey];
+		} else i++;
+	}
+	return subs;
+}
+
+/** The still shapes of `node` under matrix `m`: { subs, fill, evenodd, sw, box } each. */
+function outlines(node, m, ids, paint = { sw: 0, stroke: false, fill: true }, out = []) {
+	const a = node.attrs;
+	if (HIDDEN.has(node.tag)) return out;
+	const local = a.transform ? mul(m, parseTransform(a.transform)) : m;
+	const own = {
+		sw: a["stroke-width"] !== undefined ? Number(a["stroke-width"]) : paint.sw,
+		stroke: a.stroke !== undefined ? a.stroke !== "none" : paint.stroke,
+		fill: a.fill !== undefined ? a.fill !== "none" : paint.fill,
+		evenodd: a["fill-rule"] !== undefined ? a["fill-rule"] === "evenodd" : paint.evenodd,
+	};
+	const clip = /url\(#([^)]+)\)/.exec(a["clip-path"] ?? "");
+	if (clip && ids.has(clip[1])) {
+		// whatever a clipped group draws stays inside its clip shape: take that shape, filled
+		const fill = { sw: 0, stroke: false, fill: true };
+		for (const kid of ids.get(clip[1]).kids) outlines(kid, local, ids, fill, out);
+		return out;
+	}
+	const add = (subs) => {
+		const pts = subs.map((s) => ({ ...s, pts: s.pts.map((p) => apply(local, p)) }));
+		const sw = own.stroke ? own.sw * scaleOf(local) : 0;
+		const box = pts.flatMap((s) => s.pts).reduce((b, [x, y]) => join(b, [x, y, x, y]), NONE);
+		out.push({ subs: pts, fill: own.fill, evenodd: own.evenodd, sw, box: grow(box, sw / 2) });
+	};
+	const n = (key) => Number(a[key] ?? 0);
+	if (node.tag === "path") add(flatten(a.d ?? ""));
+	else if (node.tag === "circle" || node.tag === "ellipse") {
+		const [rx, ry] = node.tag === "circle" ? [n("r"), n("r")] : [n("rx"), n("ry")];
+		const pts = [];
+		for (let i = 0; i < 24; i++) {
+			const t = (i / 24) * Math.PI * 2;
+			pts.push([n("cx") + rx * Math.cos(t), n("cy") + ry * Math.sin(t)]);
+		}
+		add([{ pts, closed: true }]);
+	} else if (node.tag === "rect") {
+		const [x, y, w, h] = [n("x"), n("y"), n("width"), n("height")];
+		add([
+			{
+				pts: [
+					[x, y],
+					[x + w, y],
+					[x + w, y + h],
+					[x, y + h],
+				],
+				closed: true,
+			},
+		]);
+	} else if (node.tag === "use") {
+		const target = ids.get((a.href ?? "").slice(1));
+		if (target) outlines(target, local, ids, own, out);
+	} else for (const kid of node.kids) outlines(kid, local, ids, own, out);
+	return out;
+}
+
+/** Whether segment p-q crosses box r (Liang-Barsky). */
+function crosses([x1, y1], [x2, y2], r) {
+	let [t0, t1] = [0, 1];
+	const [dx, dy] = [x2 - x1, y2 - y1];
+	for (const [p, q] of [
+		[-dx, x1 - r[0]],
+		[dx, r[2] - x1],
+		[-dy, y1 - r[1]],
+		[dy, r[3] - y1],
+	]) {
+		if (p === 0) {
+			if (q < 0) return false;
+		} else {
+			const t = q / p;
+			if (p < 0) t0 = Math.max(t0, t);
+			else t1 = Math.min(t1, t);
+			if (t0 > t1) return false;
+		}
+	}
+	return true;
+}
+
+/** Whether point (x, y) is inside a filled shape's polygons (nonzero or even-odd). */
+function inside([x, y], shape) {
+	let wind = 0;
+	for (const { pts } of shape.subs) {
+		for (let i = 0; i < pts.length; i++) {
+			const [a, b] = [pts[i], pts[(i + 1) % pts.length]];
+			if (a[1] <= y && b[1] > y && (b[0] - a[0]) * (y - a[1]) - (x - a[0]) * (b[1] - a[1]) > 0)
+				wind++;
+			else if (a[1] > y && b[1] <= y && (b[0] - a[0]) * (y - a[1]) - (x - a[0]) * (b[1] - a[1]) < 0)
+				wind--;
+		}
+	}
+	return shape.evenodd ? wind % 2 !== 0 : wind !== 0;
+}
+
+/** Whether box `r` touches still shape `shape` (its fill or its stroke). */
+function touches(r, shape) {
+	if (isEmpty(meet(r, shape.box))) return false;
+	if (shape.fill) {
+		const corners = [
+			[r[0], r[1]],
+			[r[2], r[1]],
+			[r[2], r[3]],
+			[r[0], r[3]],
+		];
+		if (corners.some((c) => inside(c, shape))) return true;
+		for (const { pts } of shape.subs) {
+			for (let i = 0; i < pts.length; i++)
+				if (crosses(pts[i], pts[(i + 1) % pts.length], r)) return true;
+		}
+	}
+	if (shape.sw) {
+		const wide = grow(r, shape.sw / 2);
+		for (const { pts, closed } of shape.subs) {
+			const end = closed ? pts.length : pts.length - 1;
+			if (pts.length === 1 && crosses(pts[0], pts[0], wide)) return true;
+			for (let i = 0; i < end; i++)
+				if (crosses(pts[i], pts[(i + 1) % pts.length], wide)) return true;
+		}
+	}
+	return false;
+}
+
 // ------------------------------------------------------------------ motion layer
 
-// The open eyes again, alone on a transparent sheet laid over the base. A pivot on each face's
-// eye line, tilted with the head, squashes its eyes shut for a blink. A third of the faces also
-// glance now and then, inside the `sf-look` group that the page moves to follow the cursor. The
-// eyes are drawn in root space under their own small ink filter, so at rest their wobble is
-// exactly the base's.
+// Every head again, alone on a transparent sheet laid over the base, in the still's order:
+//  - a white outline (the base's halo filter only rings what stays put) for each head that meets
+//    the black band, at the very bottom: its silhouettes dilated by the halo's 3.2 units, moving
+//    with the head and clipped to the band;
+//  - each moving part in its head's animated group, its runs of still shapes under ink filters;
+//  - "covers": copies of the still shapes drawn after a moving part (its own collar and torso,
+//    neighbours, the row in front) wherever that part can touch them or a white outline reaches,
+//    clipped to those boxes, so they stay in front of it just as in the still.
+// The shapes are written exactly as in the still, so baking the wobble into them gives all three
+// files the same lines.
 
-const seconds = (ms) => String(+(ms / 1000).toFixed(2));
-const pct = (ms, dur) => `${+((ms / dur) * 100).toFixed(2)}%`;
-const nudge = ([x, y]) => (x || y ? `translate(${f(x)}px,${f(y)}px)` : "none");
+const BAND = Math.round(ROWS[0].y + ROWS[0].s * 128); // the white backing starts here
+const SLACK = 2.5; // ink wobble and antialiasing round every box
+const HALO = 3.2;
 
-/** A loop that rests open, then blinks at each start (ms): 70 ms shut, 60 held, 100 open. */
-function blinkKeys(name, dur, starts) {
-	const open = starts.flatMap((t) => [pct(t, dur), pct(t + 230, dur)]);
-	const shut = starts.flatMap((t) => [pct(t + 70, dur), pct(t + 130, dur)]);
-	const rest = ["0%", ...open, "100%"].join(",");
-	return `@keyframes ${name}{${rest}{transform:none}${shut.join(",")}{transform:scaleY(.1)}}`;
-}
+const MOTION_DEFS = [
+	"<defs>",
+	'<filter id="ink" x="-30%" y="-30%" width="160%" height="160%">',
+	...INK_WOBBLE,
+	"</filter>",
+	// the still's ink and halo in one filter, without the drawing: only the white rim round a
+	// head's wobbled white silhouette (one filter, as two nested ones would cost a layer and a
+	// surface). Each run of silhouettes sits in a viewport that stops it just below the band.
+	'<filter id="rim" x="-50%" y="-50%" width="200%" height="200%">',
+	...INK_WOBBLE.map((line) =>
+		line.replace("<feDisplacementMap ", '<feDisplacementMap result="w" '),
+	),
+	`<feMorphology in="w" operator="dilate" radius="${HALO}" result="d"/>`,
+	'<feFlood flood-color="#fff"/>',
+	'<feComposite in2="d" operator="in"/>',
+	"</filter>",
+	...DEFS.split("\n").filter((line) => /^(<pattern|<g id="flower")/.test(line)),
+	'<g id="flower-sil" fill="#fff" stroke="#fff" stroke-width="2">' +
+		PETALS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="5.4"/>`).join("") +
+		"</g>",
+	"</defs>",
+];
 
-/** A loop that rests centred and passes through each [ms, [dx, dy]] stop in turn. */
-function glanceKeys(name, dur, stops) {
-	const steps = stops.map(([t, at]) => `${pct(t, dur)}{transform:${nudge(at)}}`);
-	return `@keyframes ${name}{0%,100%{transform:none}${steps.join("")}}`;
-}
-
-/** Head-space point (x, y) of figure `k`, tilted `tilt` degrees about (0, cy), in root space. */
-function rootPoint(k, tilt, cy, x, y) {
-	const a = (tilt * Math.PI) / 180;
-	const s = Number(k.s.toFixed(3));
-	const dx = x * Math.cos(a) - (y - cy) * Math.sin(a);
-	const dy = cy + x * Math.sin(a) + (y - cy) * Math.cos(a);
-	return [Number(f(k.x)) + s * dx, Number(f(k.y)) + s * dy];
-}
-
-/** Wraps root-space `body` in a pivot on root point (x, y), turned `tilt` degrees. */
-function pivot(cls, [x, y], tilt, body) {
+/** `body` (root space) in figure `fig`'s head group, moving about its neck point. */
+function headGroup(fig, body) {
+	const [x, y] = fig.neck;
 	return (
-		`<g transform="translate(${f(x)} ${f(y)}) rotate(${f(tilt)})"><g class="${cls}">` +
-		`<g transform="rotate(${f(-tilt)}) translate(${f(-x)} ${f(-y)})">${body}</g></g></g>`
+		`<g transform="translate(${f(x)} ${f(y)})"><g class="cr-head cr-h${fig.n}">` +
+		`<g transform="translate(${f(-x)} ${f(-y)})">${body}</g></g></g>`
 	);
 }
 
-function motionLayer(faces, crowd) {
-	for (const face of faces) {
-		const { k, eyes, tilt, cy } = face;
-		const x = eyes.reduce((sum, e) => sum + e.x, 0) / eyes.length;
-		face.pivot = rootPoint(k, tilt, cy, x, eyes[0].y);
+/** The top-level shapes of `markup`, kept together where they share an id (a clipped shape). */
+function pieces(markup) {
+	const out = [];
+	let open = null;
+	for (const kid of parseSvg(markup).kids) {
+		const text = markup.slice(kid.start, kid.end);
+		const refs = [...text.matchAll(/(?:href="#|url\(#)([^")]+)/g)].map((m) => m[1]);
+		if (open && refs.some((r) => open.ids.has(r))) {
+			open.text += text;
+			open.nodes.push(kid);
+			idsOf(kid, open.ids);
+			continue;
+		}
+		open = { text, nodes: [kid], ids: idsOf(kid) };
+		out.push(open);
 	}
-	// Glancers: a third of each row, one in each band across the picture, among faces whose eyes
-	// are inside it with both eyes open (or one beside an eye patch).
-	plan = mulberry32(SEED + 4);
-	const lookers = new Set();
-	const canLook = ({ k, eyes, pivot: [x] }) =>
-		k.kind !== "robot" && (eyes.length === 2 || k.eyewear === "patch") && x > 40 && x < 1560;
-	ROWS.forEach((_, r) => {
-		const quota = Math.round(crowd.filter((k) => k.r === r).length / 3);
-		for (let band = 0; band < quota; band++) {
-			const free = faces.filter((face) => face.k.r === r && canLook(face) && !lookers.has(face));
-			const inBand = free.filter(
-				(face) => Math.floor(((face.pivot[0] - 40) / 1520) * quota) === band,
-			);
-			const pool = inBand.length ? inBand : free;
-			if (pool.length) lookers.add(pick(pool));
+	return out;
+}
+
+/**
+ * The union of `rects` as disjoint rects: horizontal slabs between their edges, each split into
+ * the runs of x it covers, with matching slabs joined back up.
+ */
+function disjoint(rects) {
+	const ys = [...new Set(rects.flatMap((r) => [r[1], r[3]]))].sort((a, b) => a - b);
+	const out = [];
+	let open = [];
+	for (let i = 0; i < ys.length - 1; i++) {
+		const [y0, y1] = [ys[i], ys[i + 1]];
+		const spans = rects
+			.filter((r) => r[1] <= y0 && r[3] >= y1)
+			.map((r) => [r[0], r[2]])
+			.sort((a, b) => a[0] - b[0]);
+		const merged = [];
+		for (const [x0, x1] of spans) {
+			const last = merged[merged.length - 1];
+			if (last && x0 <= last[1]) last[1] = Math.max(last[1], x1);
+			else merged.push([x0, x1]);
 		}
-	});
-	const rules = [];
-	const keys = [];
-	const parts = faces.map((face, n) => {
-		const { k, eyes, tilt, cy } = face;
-		plan = mulberry32(SEED * 11 + n * 7907);
-		const dur = Math.round(between(4, 9) * 100) * 10;
-		const starts = chance(0.22) ? [dur / 2, dur / 2 + 370] : [dur / 2];
-		const delay = Math.round(between(0, dur) / 10) * 10;
-		const timing = `${seconds(dur)}s ease-in-out -${seconds(delay)}s infinite`;
-		rules.push(`.cr-b${n}{animation:cr-b${n} ${timing}}`);
-		keys.push(blinkKeys(`cr-b${n}`, dur, starts));
-		const blink = `cr-blink cr-b${n}`;
-		const frame = `${face.at} rotate(${f(tilt)} 0 ${f(cy)})`;
-		// Each eye's first shape is the eyeball. Its catch-lights (or a screen eye's pupil) squash
-		// a second time inside it, so a shut eye reads as one solid line.
-		const cut = eyes.map(({ markup }) => markup.indexOf("/>") + 2);
-		const balls = eyes.map(({ markup }, i) => markup.slice(0, cut[i])).join("");
-		const lights = eyes.map(({ markup }, i) => markup.slice(cut[i])).join("");
-		const inner = pivot(blink, face.pivot, tilt, `<g transform="${frame}">${lights}</g>`);
-		let part = `<g filter="url(#ink)"><g transform="${frame}">${balls}</g>${inner}</g>`;
-		if (lookers.has(face)) {
-			// Solid ink eyes shift a little within the face; glasses leave less room above and below.
-			const reach = (k.kind === "frog" ? 4 : k.eyewear === "glasses" ? 2.6 : 3.4) * k.s;
-			const look = Number(f(reach));
-			const glance = Math.round(between(6, 9) * 100) * 10;
-			const side = chance(0.5) ? 1 : -1;
-			const first = [side * look * between(0.85, 1), look * between(-0.3, 0.25)];
-			let t = Math.round(between(0.08, 0.3) * glance);
-			const stops = [[t, [0, 0]]];
-			const hold = (ms, at) => {
-				stops.push([(t += 380), at], [(t += ms), at]);
-			};
-			hold(between(1000, 1700), first);
-			if (chance(0.3)) {
-				hold(between(600, 900), [-first[0] * between(0.7, 0.95), look * between(-0.25, 0.25)]);
+		const next = [];
+		for (const [x0, x1] of merged) {
+			let r = open.find((o) => o[0] === x0 && o[2] === x1 && o[3] === y0);
+			if (r) r[3] = y1;
+			else out.push((r = [x0, y0, x1, y1]));
+			next.push(r);
+		}
+		open = next;
+	}
+	return out;
+}
+
+/**
+ * `body` (root space) clipped to box `b` by a nested <svg> viewport, a rect clip that the
+ * compositor applies as it draws; a clipPath round a composited layer becomes a mask surface.
+ */
+function viewport(b, body) {
+	const [x, y, w, h] = [b[0], b[1], b[2] - b[0], b[3] - b[1]].map(f);
+	const view = `x="${x}" y="${y}" width="${w}" height="${h}" viewBox="${x} ${y} ${w} ${h}"`;
+	return `<svg ${view} overflow="hidden">${body}</svg>`;
+}
+
+/**
+ * The motion layer's items in the still's order: each moving part in its head group with the
+ * box it can reach, and each still shape with its box. A figure's moving parts are joined into
+ * one wherever the still shapes between them can't touch the earlier one (so the hair behind a
+ * head moves in the head's own group, with no layers for the torso between them). Also sets
+ * every figure's `reach`.
+ */
+function layout(figs) {
+	const defsIds = idsOf(parseSvg(MOTION_DEFS.join("")));
+	const items = [];
+	const moverBox = (fig, markup) => {
+		const tree = parseSvg(headGroup(fig, `<g transform="${fig.at}">${markup}</g>`));
+		return grow(reach(tree, ID, new Map([...defsIds, ...idsOf(tree)])), SLACK);
+	};
+	for (const fig of figs) {
+		fig.reach = NONE;
+		const flat = [];
+		for (const part of fig.parts) {
+			if (!part.markup) continue;
+			if (part.move) {
+				flat.push({ move: true, markup: part.markup, box: moverBox(fig, part.markup) });
+				continue;
 			}
-			stops.push([t + 420, [0, 0]]);
-			const lag = Math.round(between(0, glance) / 10) * 10;
-			rules.push(
-				`.cr-g${n}{animation:cr-g${n} ${seconds(glance)}s cubic-bezier(.45,0,.55,1) ` +
-					`-${seconds(lag)}s infinite}`,
-			);
-			keys.push(glanceKeys(`cr-g${n}`, glance, stops));
-			part = `<g class="sf-look" data-look="${look}"><g class="cr-glance cr-g${n}">${part}</g></g>`;
+			for (const piece of pieces(part.markup)) {
+				const ids = new Map([...defsIds, ...piece.ids]);
+				const box = piece.nodes.reduce((b, node) => join(b, reach(node, fig.m, ids)), NONE);
+				if (hasPoints(box)) flat.push({ fig, markup: piece.text, box: grow(box, SLACK) });
+			}
 		}
-		return `<!-- ${describe(k)} -->${pivot(blink, face.pivot, tilt, part)}`;
-	});
-	return [
+		for (let i = 0; i < flat.length; i++) {
+			const j = flat.findIndex((x, k) => k > i && x.move);
+			if (!flat[i].move || j < 0) continue;
+			if (flat.slice(i + 1, j).every((x) => isEmpty(meet(x.box, flat[i].box)))) {
+				const markup = flat[i].markup + flat[j].markup;
+				flat[j] = { move: true, markup, box: join(flat[i].box, flat[j].box) };
+				flat.splice(i--, 1);
+			}
+		}
+		for (const item of flat) {
+			if (!item.move) {
+				items.push(item);
+				continue;
+			}
+			const local = floatUp(
+				joinTilts(item.markup),
+				fig.m,
+				new Map([...defsIds, ...idsOf(parseSvg(item.markup))]),
+			);
+			const markup = headGroup(
+				fig,
+				pushFilters(`<g transform="${fig.at}">${local}</g>`, inkRun, ROOT_INK),
+			);
+			items.push({ move: true, fig, markup, box: item.box });
+			fig.reach = join(fig.reach, item.box);
+		}
+	}
+	return items;
+}
+
+function assemble(figs, items) {
+	// the white outlines, for the heads whose reach crosses into the black band: each run of
+	// silhouettes in a viewport round it that stops a little below the band, where the white
+	// backing starts (and the covers stop), whether its rim comes from the filter or is baked
+	const defsIds = idsOf(parseSvg(MOTION_DEFS.join("")));
+	const rims = [];
+	for (const fig of figs) {
+		if (!fig.sil) continue;
+		const markup = `<g transform="${fig.at}">${fig.sil}</g>`;
+		const ids = new Map([...defsIds, ...idsOf(parseSvg(markup))]);
+		const rimRun = (body, run, ctm) => {
+			const box = run.reduce((b, node) => join(b, reach(node, ctm, ids)), NONE);
+			const clip = meet(grow(box, HALO + SLACK), [-Infinity, -Infinity, Infinity, BAND + 16]);
+			return isEmpty(clip) ? "" : viewport(clip, `<g filter="url(#rim)">${body}</g>`);
+		};
+		const body = pushFilters(markup, rimRun, true);
+		const box = meet(grow(fig.reach, HALO + SLACK), [-Infinity, -Infinity, Infinity, BAND + 26]);
+		rims.push({ box, markup: headGroup(fig, body) });
+	}
+	// covers: every still shape drawn after a moving part, wherever that part (or any white
+	// outline) can reach, clipped to those boxes; each run of them between two moving parts
+	// shares one group, one clip and one filter
+	const reached = [];
+	const out = [];
+	let run = [];
+	let covers = 0;
+	// A shape can show in more than one cover box: it is drawn in full in the first one, as a
+	// group with an id, and <use>d in the others, so it is written (and baked) once and every id
+	// stays unique. Neighbouring shapes of one figure share its transform.
+	let shared = 0;
+	const flush = () => {
+		const rects = run.flatMap((item) => item.rects).map((b) => b.map((v) => Number(f(v))));
+		const boxes = disjoint(rects)
+			.map((box) => ({ box, inside: run.filter((item) => !isEmpty(meet(item.box, box))) }))
+			.filter(({ inside }) => inside.length);
+		const seen = new Map();
+		for (const { inside } of boxes)
+			for (const item of inside) seen.set(item, (seen.get(item) ?? 0) + 1);
+		const ids = new Map();
+		for (const { box, inside } of boxes) {
+			covers += 1;
+			let body = "";
+			let at = null;
+			for (const item of inside) {
+				if (item.fig.at !== at) body += `${at ? "</g>" : ""}<g transform="${(at = item.fig.at)}">`;
+				if (seen.get(item) === 1) body += item.markup;
+				else if (ids.has(item)) body += `<use href="#${ids.get(item)}"/>`;
+				else {
+					ids.set(item, `c${++shared}`);
+					body += `<g id="${ids.get(item)}">${item.markup}</g>`;
+				}
+			}
+			out.push(viewport(box, `<g filter="url(#ink)">${body}</g></g>`));
+		}
+		run = [];
+	};
+	// A still shape needs a cover only where a moving part drawn before it can actually touch it
+	// (any of the part's shapes, through all its poses): its cover box is the part of its own box
+	// that those shapes reach. Under a white outline, which paints all over its box, every shape
+	// in the box is covered.
+	let last = null;
+	for (const item of items) {
+		if (item.move) {
+			flush();
+			if (item.fig !== last) out.push(`<!-- ${describe(item.fig.k)} -->`);
+			last = item.fig;
+			out.push(item.markup);
+			const tree = parseSvg(item.markup);
+			const leaves = leafBoxes(tree, [ID], new Map([...defsIds, ...idsOf(tree)]));
+			reached.push({ box: item.box, leaves });
+			continue;
+		}
+		let shapes = null;
+		const rects = [];
+		for (const { box, leaves } of reached) {
+			if (isEmpty(meet(box, item.box))) continue;
+			if (!shapes) {
+				const tree = parseSvg(item.markup);
+				const ids = new Map([...defsIds, ...idsOf(tree)]);
+				shapes = tree.kids.flatMap((node) => outlines(node, item.fig.m, ids));
+			}
+			const hit = leaves.filter((r) => shapes.some((sh) => touches(r, sh)));
+			const reach = meet(
+				hit.reduce((b, r) => join(b, r), NONE),
+				item.box,
+			);
+			if (!isEmpty(reach)) rects.push(reach);
+		}
+		for (const rim of rims)
+			if (!isEmpty(meet(rim.box, item.box))) rects.push(meet(rim.box, item.box));
+		if (rects.length) run.push({ ...item, rects });
+	}
+	flush();
+	const anims = [...ANIMS.values()];
+	const families = [...new Set(anims.map((a) => `.cr-${a.family}`))].join(",");
+	const svg = [
 		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" width="1600" height="1100" ' +
 			'aria-hidden="true">',
-		"<defs>",
-		'<filter id="ink" x="-30%" y="-30%" width="160%" height="160%">',
-		...INK_WOBBLE,
-		"</filter>",
-		"</defs>",
+		...MOTION_DEFS,
 		"<style>",
-		".cr-blink{transform-origin:0 0}",
-		...rules,
-		...keys,
+		`${families}{transform-origin:0 0}`,
+		...anims.map((a) => a.rule),
+		...anims.map((a) => a.keys).filter(Boolean),
 		"@media (prefers-reduced-motion: reduce) {",
-		".cr-blink,.cr-glance{animation:none!important}",
+		`${families}{animation:none!important}`,
 		"}",
 		"</style>",
-		...parts,
+		'<g stroke-linecap="round" stroke-linejoin="round">',
+		...rims.map((rim) => rim.markup),
+		...out,
+		"</g>",
 		"</svg>",
 		"",
 	].join("\n");
+	return { svg, covers, rims: rims.length };
 }
 
 function build() {
 	const crowd = castCrowd();
-	const faces = [];
-	const rows = ROWS.map((_, r) => {
-		const figures = crowd
-			.map((k, i) => [k, i])
-			.filter(([k]) => k.r === r)
-			.map(([k, i]) => {
-				jit = mulberry32(SEED + i * 7919);
-				figure = { eyes: [], tilt: 0, cy: 0 };
-				const body = DRAW[k.kind](k);
-				const at = `translate(${f(k.x)} ${f(k.y)}) scale(${k.s.toFixed(3)})`;
-				const { eyes } = figure;
-				if (eyes.length) faces.push({ ...figure, k, at });
-				// [still, base]: the base leaves out every eye that moves
-				return [true, false].map((open) => {
-					const drawn = body.replace(EYE_TOKEN, (_, n) => (open ? eyes[n].markup : ""));
-					return `<!-- ${describe(k)} --><g transform="${at}">${drawn}</g>`;
-				});
-			});
-		return [0, 1].map(
-			(j) => `<!-- row ${r + 1} -->\n<g>${figures.map((g) => g[j]).join("\n")}</g>`,
-		);
+	// pass 1: the still and the base, which leaves out every moving part
+	const drawn = crowd.map((k, i) => {
+		jit = mulberry32(SEED + i * 7919);
+		figure = { n: i, s: Number(k.s.toFixed(3)), eyes: [], tilt: 0, cy: 0 };
+		const at = `translate(${f(k.x)} ${f(k.y)}) scale(${k.s.toFixed(3)})`;
+		const parts = DRAW[k.kind](k);
+		const still = parts.map((part) => part.markup).join("");
+		const base = parts
+			.filter((part) => !part.move)
+			.map((part) => part.markup)
+			.join("");
+		return [still, base].map((body) => `<!-- ${describe(k)} --><g transform="${at}">${body}</g>`);
 	});
+	const rows = ROWS.map((_, r) =>
+		[0, 1].map((j) => {
+			const figures = drawn.filter((_, i) => crowd[i].r === r).map((g) => g[j]);
+			return `<!-- row ${r + 1} -->\n<g>${figures.join("\n")}</g>`;
+		}),
+	);
 	// Paper behind every row below the back row's shoulders, so no black shows through.
-	const top = ROWS[0];
-	const underTop = Math.round(top.y + top.s * 128);
 	const page = (j) =>
 		[
 			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" width="1600" ' +
@@ -2432,7 +4048,7 @@ function build() {
 				"glasses and headphones, with two robots, two foxes, a frog, bear-hooded kids and a " +
 				"mushroom sprite peeking out among them</title>",
 			DEFS,
-			`<rect x="-40" y="${underTop}" width="1680" height="${1140 - underTop}" fill="#fff"/>`,
+			`<rect x="-40" y="${BAND}" width="1680" height="${1140 - BAND}" fill="#fff"/>`,
 			'<g filter="url(#halo)">' +
 				'<g stroke-linecap="round" stroke-linejoin="round" filter="url(#ink)">',
 			rows.map((row) => row[j]).join("\n"),
@@ -2440,15 +4056,56 @@ function build() {
 			"</svg>",
 			"",
 		].join("\n");
-	return { still: page(0), base: page(1), motion: motionLayer(faces, crowd) };
+
+	// pass 2: every figure again, with its moving parts in their animated groups
+	const plans = planHeads(crowd);
+	MOTION = true;
+	uid = 0;
+	const begin = (k, i) => {
+		jit = mulberry32(SEED + i * 7919);
+		const side = sideOf(k);
+		figure = { n: i, s: Number(k.s.toFixed(3)), eyes: [], tilt: 0, cy: 0, head: k.move, side };
+	};
+	const figs = crowd.map((k, i) => {
+		begin(k, i);
+		const parts = DRAW[k.kind](k);
+		const s = Number(k.s.toFixed(3));
+		const at = `translate(${f(k.x)} ${f(k.y)}) scale(${k.s.toFixed(3)})`;
+		const neck = [Number(f(k.x)), Number(f(Number(f(k.y)) + s * figure.cy))];
+		return { k, n: i, at, m: parseTransform(at), neck, parts, sil: "" };
+	});
+	const items = layout(figs);
+	// pass 3: silhouettes of the heads that can reach the black band, for their white outline
+	SIL = true;
+	for (const fig of figs) {
+		if (fig.reach[1] - HALO - SLACK >= BAND) continue;
+		begin(fig.k, fig.n);
+		fig.sil = DRAW[fig.k.kind](fig.k)
+			.filter((part) => part.move)
+			.map((part) => part.markup)
+			.join("");
+	}
+	SIL = false;
+	MOTION = false;
+	const motion = assemble(figs, items);
+	return { still: page(0), base: page(1), motion, plans, figs };
 }
 
 const out = build();
 for (const [path, svg] of [
 	[OUT, out.still],
 	[OUT_BASE, out.base],
-	[OUT_MOTION, out.motion],
+	[OUT_MOTION, out.motion.svg],
 ]) {
 	writeFileSync(path, svg);
 	console.log(`wrote ${path} (${(svg.length / 1024).toFixed(0)} KB)`);
 }
+const load = headLoad(out.plans, 600);
+const mean = load.reduce((sum, v) => sum + v, 0) / load.length;
+const sorted = [...load].sort((a, b) => a - b);
+console.log(
+	`${out.figs.length} heads move; ${ANIMS.size} animations; ${out.motion.covers} covers, ` +
+		`${out.motion.rims} white outlines; heads moving at once over 10 min: mean ` +
+		`${mean.toFixed(1)} (${((mean / out.figs.length) * 100).toFixed(0)}%), ` +
+		`p95 ${sorted[Math.floor(sorted.length * 0.95)]}, max ${sorted[sorted.length - 1]}`,
+);
